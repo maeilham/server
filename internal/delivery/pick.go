@@ -23,7 +23,6 @@ type Content struct {
 	Preview       string
 	BodyPath      string
 	DiscussionURL sql.NullString
-	SendOrder     int
 	RotationCount int
 }
 
@@ -153,14 +152,14 @@ func TodayContentForRepo(ctx context.Context, db *sql.DB, repoSlug string) (*Con
 	var c Content
 	err := db.QueryRowContext(ctx, `
 		SELECT repo_slug, content_id, title, preview, body_path,
-		       discussion_url, send_order, rotation_count
+		       discussion_url, rotation_count
 		  FROM contents
 		 WHERE repo_slug = ? AND deleted_at IS NULL
-		 ORDER BY rotation_count ASC, send_order ASC
+		 ORDER BY rotation_count ASC, content_id ASC
 		 LIMIT 1`, repoSlug,
 	).Scan(
 		&c.RepoSlug, &c.ContentID, &c.Title, &c.Preview, &c.BodyPath,
-		&c.DiscussionURL, &c.SendOrder, &c.RotationCount,
+		&c.DiscussionURL, &c.RotationCount,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil

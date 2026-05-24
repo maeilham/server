@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"path"
 	"regexp"
-	"strconv"
 	"strings"
 )
 
@@ -62,7 +61,6 @@ func Sync(
 		stats.Scanned++
 
 		contentID := match[1]
-		sendOrder, _ := strconv.Atoi(match[1])
 		seen[contentID] = struct{}{}
 
 		if existingSHA, ok := current[contentID]; ok && existingSHA == e.SHA {
@@ -83,7 +81,7 @@ func Sync(
 			continue
 		}
 
-		inserted, err := upsert(ctx, db, repoSlug, contentID, parsed, sendOrder, e.Path, e.SHA)
+		inserted, err := upsert(ctx, db, repoSlug, contentID, parsed, e.Path, e.SHA)
 		if err != nil {
 			logger.Error("upsert", "file", e.Path, "err", err)
 			stats.Errors++
@@ -140,7 +138,7 @@ func loadCurrent(ctx context.Context, db *sql.DB, repoSlug string) (map[string]s
 func upsert(
 	ctx context.Context, db *sql.DB,
 	repoSlug, contentID string, p *ParsedContent,
-	sendOrder int, bodyPath, githubSHA string,
+	bodyPath, githubSHA string,
 ) (bool, error) {
 	tagsJSON, err := encodeTags(p.Frontmatter.Tags)
 	if err != nil {
@@ -168,10 +166,10 @@ func upsert(
 		_, err = db.ExecContext(ctx, `
 			INSERT INTO contents
 			  (repo_slug, content_id, title, preview, tags, source_url, source_author,
-			   body_path, body_hash, github_sha, send_order)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			   body_path, body_hash, github_sha)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			repoSlug, contentID, p.Frontmatter.Title, p.Frontmatter.Preview,
-			tagsJSON, sourceURL, sourceAuthor, bodyPath, p.BodyHash, githubSHA, sendOrder)
+			tagsJSON, sourceURL, sourceAuthor, bodyPath, p.BodyHash, githubSHA)
 		if err != nil {
 			return false, err
 		}
@@ -190,12 +188,11 @@ func upsert(
 		       body_path     = ?,
 		       body_hash     = ?,
 		       github_sha    = ?,
-		       send_order    = ?,
 		       deleted_at    = NULL,
 		       synced_at     = CURRENT_TIMESTAMP
 		 WHERE repo_slug = ? AND content_id = ?`,
 		p.Frontmatter.Title, p.Frontmatter.Preview, tagsJSON, sourceURL, sourceAuthor,
-		bodyPath, p.BodyHash, githubSHA, sendOrder, repoSlug, contentID)
+		bodyPath, p.BodyHash, githubSHA, repoSlug, contentID)
 	return false, err
 }
 

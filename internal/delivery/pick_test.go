@@ -46,13 +46,13 @@ func insertRepo(t *testing.T, db *sql.DB, slug string) {
 		slug, "https://github.com/maeilham/"+slug, slug)
 }
 
-func insertContent(t *testing.T, db *sql.DB, repoSlug, contentID string, sendOrder int) {
+func insertContent(t *testing.T, db *sql.DB, repoSlug, contentID string) {
 	t.Helper()
 	mustExec(t, db, `
-		INSERT INTO contents(repo_slug, content_id, title, preview, body_path, body_hash, send_order)
-		VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		INSERT INTO contents(repo_slug, content_id, title, preview, body_path, body_hash)
+		VALUES (?, ?, ?, ?, ?, ?)`,
 		repoSlug, contentID, "title-"+contentID, "preview-"+contentID,
-		"content/"+contentID+".md", "hash-"+contentID, sendOrder)
+		"content/"+contentID+".md", "hash-"+contentID)
 }
 
 func subscribe(t *testing.T, db *sql.DB, subID int64, repoSlug string, weight int) {
@@ -77,12 +77,12 @@ func TestTodayContentForRepo_Empty(t *testing.T) {
 	}
 }
 
-func TestTodayContentForRepo_OrdersByRotationThenSendOrder(t *testing.T) {
+func TestTodayContentForRepo_OrdersByRotationThenContentID(t *testing.T) {
 	db := newTestDB(t)
 	insertRepo(t, db, "be")
-	insertContent(t, db, "be", "0001", 1)
-	insertContent(t, db, "be", "0002", 2)
-	insertContent(t, db, "be", "0003", 3)
+	insertContent(t, db, "be", "0001")
+	insertContent(t, db, "be", "0002")
+	insertContent(t, db, "be", "0003")
 
 	// 0001 already rotated, so 0002 should now be "today"
 	mustExec(t, db, `UPDATE contents SET rotation_count = 1 WHERE content_id = '0001'`)
@@ -99,8 +99,8 @@ func TestTodayContentForRepo_OrdersByRotationThenSendOrder(t *testing.T) {
 func TestTodayContentForRepo_IgnoresDeleted(t *testing.T) {
 	db := newTestDB(t)
 	insertRepo(t, db, "be")
-	insertContent(t, db, "be", "0001", 1)
-	insertContent(t, db, "be", "0002", 2)
+	insertContent(t, db, "be", "0001")
+	insertContent(t, db, "be", "0002")
 	mustExec(t, db, `UPDATE contents SET deleted_at = CURRENT_TIMESTAMP WHERE content_id = '0001'`)
 
 	got, err := TodayContentForRepo(context.Background(), db, "be")
@@ -119,7 +119,7 @@ func TestPickForSubscriber_Unconfirmed(t *testing.T) {
 	res, _ := db.Exec(`INSERT INTO subscribers(email) VALUES (?)`, "x@x.kr")
 	id, _ := res.LastInsertId()
 	insertRepo(t, db, "be")
-	insertContent(t, db, "be", "0001", 1)
+	insertContent(t, db, "be", "0001")
 	subscribe(t, db, id, "be", 3)
 
 	got, err := PickForSubscriber(context.Background(), db, id, time.Now())
@@ -136,7 +136,7 @@ func TestPickForSubscriber_Paused(t *testing.T) {
 	id := insertConfirmedSubscriber(t, db, "x@x.kr")
 	mustExec(t, db, `UPDATE subscribers SET paused_at = CURRENT_TIMESTAMP WHERE id = ?`, id)
 	insertRepo(t, db, "be")
-	insertContent(t, db, "be", "0001", 1)
+	insertContent(t, db, "be", "0001")
 	subscribe(t, db, id, "be", 3)
 
 	got, err := PickForSubscriber(context.Background(), db, id, time.Now())
@@ -180,7 +180,7 @@ func TestPickForSubscriber_SingleSubscription(t *testing.T) {
 	db := newTestDB(t)
 	id := insertConfirmedSubscriber(t, db, "x@x.kr")
 	insertRepo(t, db, "be")
-	insertContent(t, db, "be", "0001", 1)
+	insertContent(t, db, "be", "0001")
 	subscribe(t, db, id, "be", 3)
 
 	got, err := PickForSubscriber(context.Background(), db, id, time.Now())
@@ -198,8 +198,8 @@ func TestPickForSubscriber_IgnoresInactiveRepo(t *testing.T) {
 	insertRepo(t, db, "be")
 	insertRepo(t, db, "fe")
 	mustExec(t, db, `UPDATE repos SET active = 0 WHERE slug = 'be'`)
-	insertContent(t, db, "be", "0001", 1)
-	insertContent(t, db, "fe", "0001", 1)
+	insertContent(t, db, "be", "0001")
+	insertContent(t, db, "fe", "0001")
 	subscribe(t, db, id, "be", 5)
 	subscribe(t, db, id, "fe", 1)
 
@@ -217,8 +217,8 @@ func TestPickForSubscriber_DeterministicSameDay(t *testing.T) {
 	id := insertConfirmedSubscriber(t, db, "x@x.kr")
 	insertRepo(t, db, "be")
 	insertRepo(t, db, "fe")
-	insertContent(t, db, "be", "0001", 1)
-	insertContent(t, db, "fe", "0001", 1)
+	insertContent(t, db, "be", "0001")
+	insertContent(t, db, "fe", "0001")
 	subscribe(t, db, id, "be", 3)
 	subscribe(t, db, id, "fe", 3)
 
@@ -237,8 +237,8 @@ func TestPickForSubscriber_DifferentDayMayDiffer(t *testing.T) {
 	id := insertConfirmedSubscriber(t, db, "x@x.kr")
 	insertRepo(t, db, "be")
 	insertRepo(t, db, "fe")
-	insertContent(t, db, "be", "0001", 1)
-	insertContent(t, db, "fe", "0001", 1)
+	insertContent(t, db, "be", "0001")
+	insertContent(t, db, "fe", "0001")
 	subscribe(t, db, id, "be", 3)
 	subscribe(t, db, id, "fe", 3)
 
@@ -262,8 +262,8 @@ func TestPickForSubscriber_WeightDistribution(t *testing.T) {
 	db := newTestDB(t)
 	insertRepo(t, db, "be")
 	insertRepo(t, db, "fe")
-	insertContent(t, db, "be", "0001", 1)
-	insertContent(t, db, "fe", "0001", 1)
+	insertContent(t, db, "be", "0001")
+	insertContent(t, db, "fe", "0001")
 
 	// 충분히 많은 구독자를 만들어 다른 시드로 분포 검증
 	beCount := 0

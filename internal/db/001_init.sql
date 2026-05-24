@@ -40,7 +40,6 @@ CREATE TABLE contents (
     body_path      TEXT    NOT NULL,             -- 'content/0001-scale-up-vs-scale-out.md'
     body_hash      TEXT    NOT NULL,             -- sha256 of body (우리 계산)
     github_sha     TEXT,                          -- GitHub blob sha (변경 감지용)
-    send_order     INTEGER NOT NULL,             -- 파일명에서 추출
     sent_at        TIMESTAMP,                    -- 마지막 발송 시각
     rotation_count INTEGER NOT NULL DEFAULT 0,
     discussion_url TEXT,
@@ -49,7 +48,7 @@ CREATE TABLE contents (
     PRIMARY KEY (repo_slug, content_id)
 );
 
-CREATE INDEX idx_contents_pickorder ON contents(repo_slug, rotation_count, send_order)
+CREATE INDEX idx_contents_pickorder ON contents(repo_slug, rotation_count, content_id)
     WHERE deleted_at IS NULL;
 CREATE INDEX idx_contents_github_sha ON contents(repo_slug, github_sha);
 

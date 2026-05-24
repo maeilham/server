@@ -12,7 +12,7 @@ CREATE TABLE subscribers (
 -- Content repos (운영자가 등록한 콘텐츠 저장소)
 CREATE TABLE repos (
     slug         TEXT    PRIMARY KEY,           -- 'backend-interview'
-    github_url   TEXT    NOT NULL,              -- 'https://github.com/maeilham/backend-interview.git'
+    github_url   TEXT    NOT NULL,              -- 'https://github.com/maeilham/backend-interview'
     display_name TEXT    NOT NULL,              -- '백엔드 면접 질문'
     description  TEXT,
     active       INTEGER NOT NULL DEFAULT 1,
@@ -31,14 +31,15 @@ CREATE TABLE subscriptions (
 -- Contents (repo에서 sync된 콘텐츠 인덱스)
 CREATE TABLE contents (
     repo_slug      TEXT    NOT NULL REFERENCES repos(slug) ON DELETE CASCADE,
-    content_id     TEXT    NOT NULL,             -- '0001'
+    content_id     TEXT    NOT NULL,             -- '0001' (파일명 4자리 숫자)
     title          TEXT    NOT NULL,
     preview        TEXT    NOT NULL,
     tags           TEXT,                          -- JSON array
     source_url     TEXT,                          -- frontmatter.source.url
     source_author  TEXT,
-    body_path      TEXT    NOT NULL,             -- 'questions/0001-scale-up-vs-scale-out.md'
-    body_hash      TEXT    NOT NULL,
+    body_path      TEXT    NOT NULL,             -- 'content/0001-scale-up-vs-scale-out.md'
+    body_hash      TEXT    NOT NULL,             -- sha256 of body (우리 계산)
+    github_sha     TEXT,                          -- GitHub blob sha (변경 감지용)
     send_order     INTEGER NOT NULL,             -- 파일명에서 추출
     sent_at        TIMESTAMP,                    -- 마지막 발송 시각
     rotation_count INTEGER NOT NULL DEFAULT 0,
@@ -50,6 +51,7 @@ CREATE TABLE contents (
 
 CREATE INDEX idx_contents_pickorder ON contents(repo_slug, rotation_count, send_order)
     WHERE deleted_at IS NULL;
+CREATE INDEX idx_contents_github_sha ON contents(repo_slug, github_sha);
 
 -- Delivery log (사용자별 발송 이력)
 CREATE TABLE delivery_log (

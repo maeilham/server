@@ -15,20 +15,17 @@ type Config struct {
 	ResendAPIKey  string
 	MailFromEmail string
 	MailFromName  string
-
-	ContentCacheDir string
 }
 
 func Load() (*Config, error) {
 	c := &Config{
-		HTTPAddr:        getEnv("MAEILHAM_HTTP_ADDR", ":8080"),
-		DatabaseURL:     getEnv("MAEILHAM_DB", "./data/maeilham.db"),
-		LogLevel:        getEnv("MAEILHAM_LOG_LEVEL", "info"),
-		GitHubToken:     os.Getenv("MAEILHAM_GITHUB_TOKEN"),
-		ResendAPIKey:    os.Getenv("MAEILHAM_RESEND_API_KEY"),
-		MailFromEmail:   getEnv("MAEILHAM_MAIL_FROM_EMAIL", "hello@maeilham.kr"),
-		MailFromName:    getEnv("MAEILHAM_MAIL_FROM_NAME", "매일함"),
-		ContentCacheDir: getEnv("MAEILHAM_CONTENT_CACHE_DIR", "./data/content-cache"),
+		HTTPAddr:      getEnv("MAEILHAM_HTTP_ADDR", ":8080"),
+		DatabaseURL:   getEnv("MAEILHAM_DB", "./data/maeilham.db"),
+		LogLevel:      getEnv("MAEILHAM_LOG_LEVEL", "info"),
+		GitHubToken:   os.Getenv("MAEILHAM_GITHUB_TOKEN"),
+		ResendAPIKey:  os.Getenv("MAEILHAM_RESEND_API_KEY"),
+		MailFromEmail: getEnv("MAEILHAM_MAIL_FROM_EMAIL", "hello@maeilham.kr"),
+		MailFromName:  getEnv("MAEILHAM_MAIL_FROM_NAME", "매일함"),
 	}
 
 	if c.DatabaseURL == "" {
@@ -43,4 +40,3 @@ func getEnv(key, fallback string) string {
 	}
 	return fallback
 }
-

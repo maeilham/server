@@ -12,12 +12,13 @@ import (
 
 	"time"
 
-	"github.com/maeilham/server/internal/pkg/config"
-	"github.com/maeilham/server/internal/pkg/logger"
 	"github.com/maeilham/server/internal/content"
 	"github.com/maeilham/server/internal/db"
 	"github.com/maeilham/server/internal/delivery"
 	"github.com/maeilham/server/internal/mail"
+	"github.com/maeilham/server/internal/pkg/closeutil"
+	"github.com/maeilham/server/internal/pkg/config"
+	"github.com/maeilham/server/internal/pkg/logger"
 )
 
 func main() {
@@ -183,7 +184,7 @@ func selectRepos(ctx context.Context, conn *sql.DB, only string) ([]repoRow, err
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer closeutil.Discard(rows)
 	var out []repoRow
 	for rows.Next() {
 		var r repoRow

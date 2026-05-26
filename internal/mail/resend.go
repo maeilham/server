@@ -8,6 +8,8 @@ import (
 	"io"
 	"net/http"
 	"time"
+
+	"github.com/maeilham/server/internal/pkg/closeutil"
 )
 
 const defaultResendEndpoint = "https://api.resend.com/emails"
@@ -79,7 +81,7 @@ func (r *ResendMailer) Send(ctx context.Context, msg Message) error {
 	if err != nil {
 		return fmt.Errorf("resend: do: %w", err)
 	}
-	defer resp.Body.Close()
+	defer closeutil.LogClose("resend api response", resp.Body)
 
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		return nil

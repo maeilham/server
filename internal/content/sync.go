@@ -9,6 +9,8 @@ import (
 	"path"
 	"regexp"
 	"strings"
+
+	"github.com/maeilham/server/internal/pkg/closeutil"
 )
 
 type SyncStats struct {
@@ -122,7 +124,7 @@ func loadCurrent(ctx context.Context, db *sql.DB, repoSlug string) (map[string]s
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer closeutil.Discard(rows)
 	m := map[string]string{}
 	for rows.Next() {
 		var id, sha string

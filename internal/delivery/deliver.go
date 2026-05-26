@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/maeilham/server/internal/mail"
+	"github.com/maeilham/server/internal/pkg/closeutil"
 )
 
 type DailySendStats struct {
@@ -139,7 +140,7 @@ func loadActiveSubscribers(ctx context.Context, db *sql.DB) ([]activeSubscriber,
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer closeutil.Discard(rows)
 	var out []activeSubscriber
 	for rows.Next() {
 		var s activeSubscriber
@@ -161,7 +162,7 @@ func loadRepoInfo(ctx context.Context, db *sql.DB) (map[string]repoMeta, error) 
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer closeutil.Discard(rows)
 	out := make(map[string]repoMeta)
 	for rows.Next() {
 		var slug string

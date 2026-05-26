@@ -9,14 +9,16 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/maeilham/server/internal/pkg/closeutil"
 )
 
 // 안전 가드: 한 repo가 시스템에 영향을 못 주도록 상한선을 둠.
 const (
-	maxTreeEntries        = 5000             // Tree API 응답 안전선
-	maxContentFiles       = 1000             // 우리가 동기화할 .md 상한
-	maxFileBytes          = 64 * 1024        // 한 파일 최대 64KB (markdown으론 충분)
-	httpTimeout           = 15 * time.Second
+	maxTreeEntries  = 5000      // Tree API 응답 안전선
+	maxContentFiles = 1000      // 우리가 동기화할 .md 상한
+	maxFileBytes    = 64 * 1024 // 한 파일 최대 64KB (markdown으론 충분)
+	httpTimeout     = 15 * time.Second
 )
 
 type GitHubClient struct {
@@ -66,7 +68,7 @@ func (c *GitHubClient) ListTree(ctx context.Context, owner, repo, ref string) ([
 	if err != nil {
 		return nil, fmt.Errorf("tree request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer closeutil.LogClose("github tree response", resp.Body)
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
@@ -128,7 +130,7 @@ func (c *GitHubClient) FetchRaw(ctx context.Context, owner, repo, ref, path stri
 	if err != nil {
 		return nil, fmt.Errorf("raw request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer closeutil.LogClose("github raw response", resp.Body)
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("raw status %d for %s", resp.StatusCode, path)

@@ -14,6 +14,8 @@ import (
 	"fmt"
 	"strconv"
 	"time"
+
+	"github.com/maeilham/server/internal/pkg/closeutil"
 )
 
 type Content struct {
@@ -126,7 +128,7 @@ func loadSubscriptions(ctx context.Context, db *sql.DB, id int64) ([]subscriptio
 	if err != nil {
 		return nil, fmt.Errorf("load subscriptions: %w", err)
 	}
-	defer rows.Close()
+	defer closeutil.Discard(rows)
 	var out []subscription
 	for rows.Next() {
 		var s subscription

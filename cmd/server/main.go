@@ -9,7 +9,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/maeilham/server/internal/config"
+	"github.com/maeilham/server/internal/pkg/config"
+	"github.com/maeilham/server/internal/pkg/logger"
 	"github.com/maeilham/server/internal/db"
 	httpsrv "github.com/maeilham/server/internal/http"
 )
@@ -19,7 +20,7 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	logger := config.NewLogger(cfg.LogLevel)
+	logger := logger.New(cfg.LogLevel)
 
 	conn, err := db.Open(cfg.DatabaseURL)
 	if err != nil {

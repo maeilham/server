@@ -18,7 +18,7 @@ func newTestDB(t *testing.T) *sql.DB {
 	if err := dbpkg.Migrate(conn); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
-	t.Cleanup(func() { conn.Close() })
+	t.Cleanup(func() { _ = conn.Close() })
 	return conn
 }
 

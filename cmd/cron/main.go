@@ -12,7 +12,8 @@ import (
 
 	"time"
 
-	"github.com/maeilham/server/internal/config"
+	"github.com/maeilham/server/internal/pkg/config"
+	"github.com/maeilham/server/internal/pkg/logger"
 	"github.com/maeilham/server/internal/content"
 	"github.com/maeilham/server/internal/db"
 	"github.com/maeilham/server/internal/delivery"
@@ -32,7 +33,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-	logger := config.NewLogger(cfg.LogLevel)
+	logger := logger.New(cfg.LogLevel)
 
 	conn, err := db.Open(cfg.DatabaseURL)
 	if err != nil {

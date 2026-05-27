@@ -122,11 +122,19 @@ func runSendTest(ctx context.Context, logger *slog.Logger, cfg *config.Config, a
 	}
 
 	mailer := mail.New(logger, cfg.ResendAPIKey, cfg.MailFromEmail, cfg.MailFromName)
+	subject, text, html := mail.RenderDaily(mail.DailyMailData{
+		RepoName:       "백엔드 면접",
+		Title:          "인덱스(Index)가 무엇이고, 어떻게 동작하나요?",
+		Preview:        "DB 인덱스는 데이터 검색 속도를 높이기 위해 별도로 관리하는 자료구조입니다. B-Tree 구조로 O(log n) 탐색을 지원하며, SELECT 성능을 크게 향상시킬 수 있습니다.",
+		GitHubURL:      "https://github.com/maeilham/be-interview/blob/main/content/0001-index.md",
+		DiscussionURL:  "https://github.com/maeilham/be-interview/discussions/1",
+		UnsubscribeURL: "https://maeilham.kr/unsubscribe?sid=0",
+	})
 	msg := mail.Message{
 		To:       *to,
-		Subject:  "[매일함] 테스트 메일",
-		TextBody: "이 메일이 보이면 발송 어댑터가 정상 동작 중입니다.\n— 매일함",
-		HTMLBody: `<p>이 메일이 보이면 발송 어댑터가 정상 동작 중입니다.</p><p>— 매일함</p>`,
+		Subject:  subject,
+		TextBody: text,
+		HTMLBody: html,
 	}
 	if err := mailer.Send(ctx, msg); err != nil {
 		return err

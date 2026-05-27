@@ -89,7 +89,7 @@ func DailySend(
 			DiscussionURL:  discussionURLOrFallback(content, info.GitHubURL),
 			UnsubscribeURL: buildUnsubscribeURL(opts.BaseURL, sub.ID),
 		}
-		subject, text := mail.RenderDaily(data)
+		subject, text, htmlBody := mail.RenderDaily(data)
 
 		if opts.DryRun {
 			l.Info("dry-run pick",
@@ -98,7 +98,7 @@ func DailySend(
 			continue
 		}
 
-		msg := mail.Message{To: sub.Email, Subject: subject, TextBody: text}
+		msg := mail.Message{To: sub.Email, Subject: subject, TextBody: text, HTMLBody: htmlBody}
 		if err := mailer.Send(ctx, msg); err != nil {
 			l.Error("send", "err", err)
 			stats.Errors++

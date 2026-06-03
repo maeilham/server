@@ -9,10 +9,12 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/maeilham/server/internal/pkg/config"
-	"github.com/maeilham/server/internal/pkg/logger"
 	"github.com/maeilham/server/internal/db"
 	httpsrv "github.com/maeilham/server/internal/http"
+	"github.com/maeilham/server/internal/mail"
+	"github.com/maeilham/server/internal/pkg/config"
+	"github.com/maeilham/server/internal/pkg/logger"
+	"github.com/maeilham/server/internal/subscriber"
 )
 
 func main() {
@@ -20,23 +22,31 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	logger := logger.New(cfg.LogLevel)
+	log := logger.New(cfg.LogLevel)
 
 	conn, err := db.Open(cfg.DatabaseURL)
 	if err != nil {
-		logger.Error("db open", "err", err)
+		log.Error("db open", "err", err)
 		os.Exit(1)
 	}
 	defer conn.Close()
 	if err := db.Migrate(conn); err != nil {
-		logger.Error("db migrate", "err", err)
+		log.Error("db migrate", "err", err)
 		os.Exit(1)
 	}
-	logger.Info("db ready", "dsn", cfg.DatabaseURL)
+	log.Info("db ready", "dsn", cfg.DatabaseURL)
+
+	mailer := mail.New(log, cfg.ResendAPIKey, cfg.MailFromEmail, cfg.MailFromName)
 
 	srv := &stdhttp.Server{
-		Addr:              cfg.HTTPAddr,
-		Handler:           httpsrv.NewRouter(logger),
+		Addr: cfg.HTTPAddr,
+		Handler: httpsrv.NewRouter(httpsrv.Deps{
+			Logger:  log,
+			Store:   subscriber.NewStore(conn),
+			Mailer:  mailer,
+			BaseURL: cfg.BaseURL,
+			Secret:  cfg.Secret,
+		}),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
@@ -44,19 +54,19 @@ func main() {
 	defer stop()
 
 	go func() {
-		logger.Info("server starting", "addr", cfg.HTTPAddr)
+		log.Info("server starting", "addr", cfg.HTTPAddr)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, stdhttp.ErrServerClosed) {
-			logger.Error("server error", "err", err)
+			log.Error("server error", "err", err)
 			os.Exit(1)
 		}
 	}()
 
 	<-ctx.Done()
-	logger.Info("server shutting down")
+	log.Info("server shutting down")
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := srv.Shutdown(shutdownCtx); err != nil {
-		logger.Error("shutdown error", "err", err)
+		log.Error("shutdown error", "err", err)
 	}
 }

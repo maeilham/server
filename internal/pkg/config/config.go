@@ -9,6 +9,8 @@ type Config struct {
 	HTTPAddr    string
 	DatabaseURL string
 	LogLevel    string
+	BaseURL     string
+	Secret      string
 
 	GitHubToken string
 
@@ -22,6 +24,8 @@ func Load() (*Config, error) {
 		HTTPAddr:      getEnv("MAEILHAM_HTTP_ADDR", ":8080"),
 		DatabaseURL:   getEnv("MAEILHAM_DB", "./data/maeilham.db"),
 		LogLevel:      getEnv("MAEILHAM_LOG_LEVEL", "info"),
+		BaseURL:       getEnv("MAEILHAM_BASE_URL", "http://localhost:5173"),
+		Secret:        getEnv("MAEILHAM_SECRET", "dev-secret-change-me"),
 		GitHubToken:   os.Getenv("MAEILHAM_GITHUB_TOKEN"),
 		ResendAPIKey:  os.Getenv("MAEILHAM_RESEND_API_KEY"),
 		MailFromEmail: getEnv("MAEILHAM_MAIL_FROM_EMAIL", "hello@maeilham.kr"),

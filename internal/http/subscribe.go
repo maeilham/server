@@ -77,32 +77,32 @@ func (h *subscribeHandler) handleConfirm(w http.ResponseWriter, r *http.Request)
 	token := r.URL.Query().Get("token")
 	email, err := verifyToken(token, h.secret)
 	if err != nil {
-		http.Redirect(w, r, h.baseURL+"/confirm?status=invalid", http.StatusSeeOther)
+		http.Redirect(w, r, h.baseURL+"/?status=invalid", http.StatusSeeOther)
 		return
 	}
 
 	if err := h.store.Confirm(r.Context(), email); err != nil {
-		http.Redirect(w, r, h.baseURL+"/confirm?status=error", http.StatusSeeOther)
+		http.Redirect(w, r, h.baseURL+"/?status=invalid", http.StatusSeeOther)
 		return
 	}
 
-	http.Redirect(w, r, h.baseURL+"/confirm?status=ok", http.StatusSeeOther)
+	http.Redirect(w, r, h.baseURL+"/?status=confirmed", http.StatusSeeOther)
 }
 
 func (h *subscribeHandler) handleUnsubscribe(w http.ResponseWriter, r *http.Request) {
 	token := r.URL.Query().Get("token")
 	email, err := verifyToken(token, h.secret)
 	if err != nil {
-		http.Redirect(w, r, h.baseURL+"/unsubscribe?status=invalid", http.StatusSeeOther)
+		http.Redirect(w, r, h.baseURL+"/?status=invalid", http.StatusSeeOther)
 		return
 	}
 
 	if err := h.store.Unsubscribe(r.Context(), email); err != nil {
-		http.Redirect(w, r, h.baseURL+"/unsubscribe?status=error", http.StatusSeeOther)
+		http.Redirect(w, r, h.baseURL+"/?status=invalid", http.StatusSeeOther)
 		return
 	}
 
-	http.Redirect(w, r, h.baseURL+"/unsubscribe?status=ok", http.StatusSeeOther)
+	http.Redirect(w, r, h.baseURL+"/?status=unsubscribed", http.StatusSeeOther)
 }
 
 // ── Token helpers ────────────────────────────────────────────────────────────

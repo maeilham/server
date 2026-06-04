@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/maeilham/server/internal/subscriber"
 	imail "github.com/maeilham/server/internal/mail"
+	"github.com/maeilham/server/internal/subscriber"
 )
 
 type subscribeHandler struct {
@@ -56,13 +56,12 @@ func (h *subscribeHandler) handleSubscribe(w http.ResponseWriter, r *http.Reques
 	token := makeToken(req.Email, h.secret)
 	confirmURL := fmt.Sprintf("%s/api/confirm?token=%s", h.baseURL, token)
 
+	subject, text, html := imail.RenderConfirm(confirmURL)
 	msg := imail.Message{
-		To:      req.Email,
-		Subject: "매일함 구독을 확인해주세요",
-		HTMLBody: fmt.Sprintf(`<p>안녕하세요! 아래 버튼을 눌러 구독을 완료해주세요.</p>
-<p><a href="%s" style="background:#1a1108;color:#F5EFDF;padding:12px 24px;text-decoration:none;display:inline-block;">구독 확인하기</a></p>
-<p style="color:#aaa;font-size:12px;">이 메일을 요청하지 않으셨다면 무시해주세요. 링크는 48시간 후 만료됩니다.</p>`, confirmURL),
-		TextBody: fmt.Sprintf("매일함 구독 확인 링크: %s\n\n48시간 후 만료됩니다.", confirmURL),
+		To:       req.Email,
+		Subject:  subject,
+		TextBody: text,
+		HTMLBody:  html,
 	}
 
 	if err := h.mailer.Send(r.Context(), msg); err != nil {

@@ -11,7 +11,11 @@ import (
 //go:embed daily.html
 var dailyHTMLTmpl string
 
-var dailyTmpl = template.Must(template.New("daily").Parse(dailyHTMLTmpl))
+//go:embed confirm.html
+var confirmHTMLTmpl string
+
+var dailyTmpl   = template.Must(template.New("daily").Parse(dailyHTMLTmpl))
+var confirmTmpl = template.Must(template.New("confirm").Parse(confirmHTMLTmpl))
 
 // DailyMailData carries everything a mail template needs.
 // The template package itself stays decoupled from delivery/content packages.
@@ -26,6 +30,19 @@ type DailyMailData struct {
 
 	// Subject is injected into the HTML template; set by RenderDaily.
 	Subject string
+}
+
+// RenderConfirm produces (subject, text, html) for the confirmation email.
+func RenderConfirm(confirmURL string) (subject, text, html string) {
+	subject = "[매일함] 구독을 확인해주세요"
+	text = fmt.Sprintf("매일함 구독 확인 링크: %s\n\n48시간 후 만료됩니다.", confirmURL)
+
+	var buf bytes.Buffer
+	if err := confirmTmpl.Execute(&buf, struct{ ConfirmURL string }{confirmURL}); err != nil {
+		panic("mail: confirm template execute: " + err.Error())
+	}
+	html = buf.String()
+	return
 }
 
 // RenderDaily produces (subject, text, html).

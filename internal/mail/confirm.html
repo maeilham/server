@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>{{.Subject}}</title>
+<title>매일함 구독 확인</title>
 </head>
 <body style="margin:0;padding:0;background:#ffffff;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Apple SD Gothic Neo,Roboto,Noto Sans KR,sans-serif;">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
@@ -15,42 +15,30 @@
         <tr>
           <td style="padding-bottom:48px;">
             <span style="font-size:17px;font-weight:700;color:#111111;letter-spacing:-0.3px;">매일함</span>
-            <span style="font-size:14px;color:#8b95a1;margin-left:8px;">{{.RepoName}}</span>
           </td>
         </tr>
 
         <!-- 타이틀 -->
         <tr>
-          <td style="padding-bottom:24px;">
-            <div style="font-size:13px;font-weight:600;color:#8b95a1;letter-spacing:0.5px;text-transform:uppercase;margin-bottom:12px;">오늘의 질문</div>
-            <div style="font-size:26px;font-weight:700;line-height:1.4;color:#333d4b;">{{.Title}}</div>
+          <td style="padding-bottom:32px;">
+            <div style="font-size:26px;font-weight:700;line-height:1.4;color:#333d4b;">구독을 확인해주세요.</div>
           </td>
         </tr>
 
-        {{if .Preview}}
-        <!-- 프리뷰 -->
+        <!-- 안내 텍스트 -->
         <tr>
           <td style="padding-bottom:32px;">
-            <div style="font-size:16px;color:#4e5968;line-height:1.7;">{{.Preview}}</div>
+            <div style="font-size:16px;color:#4e5968;line-height:1.7;">
+              아래 버튼을 눌러 구독을 완료해주세요.<br>
+              매일 아침 질문 하나가 도착하기 시작합니다.
+            </div>
           </td>
         </tr>
-        {{end}}
 
-        <!-- CTA -->
+        <!-- CTA 버튼 -->
         <tr>
           <td style="padding-bottom:48px;">
-            <table cellpadding="0" cellspacing="0">
-              <tr>
-                <td style="padding-right:8px;">
-                  <a href="{{.GitHubURL}}" style="display:inline-block;background:#111111;color:#ffffff;font-size:15px;font-weight:600;text-decoration:none;padding:12px 24px;border-radius:8px;">전체 보기 →</a>
-                </td>
-                {{if .DiscussionURL}}
-                <td>
-                  <a href="{{.DiscussionURL}}" style="display:inline-block;background:#f2f4f6;color:#333d4b;font-size:15px;font-weight:600;text-decoration:none;padding:12px 24px;border-radius:8px;">토론 참여 →</a>
-                </td>
-                {{end}}
-              </tr>
-            </table>
+            <a href="{{.ConfirmURL}}" style="display:inline-block;background:#111111;color:#ffffff;font-size:15px;font-weight:600;text-decoration:none;padding:12px 24px;border-radius:8px;">구독 확인하기 →</a>
           </td>
         </tr>
 
@@ -65,11 +53,7 @@
         <tr>
           <td style="padding-bottom:32px;">
             <div style="font-size:13px;color:#8b95a1;line-height:1.7;">
-              매일함은 하루 한 통, 개발 학습 질문을 드립니다.
-              {{if .UnsubscribeURL}}
-              &nbsp;·&nbsp;<a href="{{.UnsubscribeURL}}" style="color:#8b95a1;">구독 해지</a>
-              {{end}}
-              <br><br>
+              이 메일을 요청하지 않으셨다면 무시해주세요. 링크는 48시간 후 만료됩니다.<br><br>
               © 매일함. All Rights Reserved.<br><br>
               ※ 본 메일은 발신 전용이므로 회신 내용을 확인할 수 없습니다.
             </div>

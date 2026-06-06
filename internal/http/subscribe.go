@@ -19,7 +19,8 @@ import (
 type subscribeHandler struct {
 	store   *subscriber.Store
 	mailer  imail.Mailer
-	baseURL string
+	baseURL string // 웹 프론트 URL (리다이렉트용)
+	apiURL  string // API 서버 URL (메일 링크용)
 	secret  string
 }
 
@@ -54,7 +55,7 @@ func (h *subscribeHandler) handleSubscribe(w http.ResponseWriter, r *http.Reques
 	}
 
 	token := makeToken(req.Email, h.secret)
-	confirmURL := fmt.Sprintf("%s/api/confirm?token=%s", h.baseURL, token)
+	confirmURL := fmt.Sprintf("%s/api/confirm?token=%s", h.apiURL, token)
 
 	subject, text, html := imail.RenderConfirm(confirmURL)
 	msg := imail.Message{
@@ -92,16 +93,16 @@ func (h *subscribeHandler) handleUnsubscribe(w http.ResponseWriter, r *http.Requ
 	token := r.URL.Query().Get("token")
 	email, err := verifyToken(token, h.secret)
 	if err != nil {
-		http.Redirect(w, r, h.baseURL+"/?status=invalid", http.StatusSeeOther)
+		jsonError(w, "링크가 유효하지 않습니다", http.StatusBadRequest)
 		return
 	}
 
 	if err := h.store.Unsubscribe(r.Context(), email); err != nil {
-		http.Redirect(w, r, h.baseURL+"/?status=invalid", http.StatusSeeOther)
+		jsonError(w, "서버 오류", http.StatusInternalServerError)
 		return
 	}
 
-	http.Redirect(w, r, h.baseURL+"/?status=unsubscribed", http.StatusSeeOther)
+	jsonOK(w, map[string]string{"status": "ok"})
 }
 
 // ── Token helpers ────────────────────────────────────────────────────────────

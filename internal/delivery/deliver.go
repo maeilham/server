@@ -2,7 +2,10 @@ package delivery
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/base64"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -27,7 +30,9 @@ type DailySendStats struct {
 type DailySendOptions struct {
 	Day       time.Time // 보통 time.Now(). 테스트/디버깅용으로 주입 가능
 	DryRun    bool      // true면 실제 발송 없이 결정만 로그
-	BaseURL   string    // 매일함 사이트 URL (unsubscribe 링크 만들 때)
+	BaseURL   string    // 웹 프론트 URL (리다이렉트용)
+	APIURL    string    // API 서버 URL (메일 링크용)
+	Secret    string    // HMAC 서명 키 (unsubscribe 토큰 생성)
 	GitHubApp *gh.App   // nil이면 Discussion 생성 스킵
 }
 
@@ -99,7 +104,7 @@ func DailySend(
 			Preview:        content.Preview,
 			GitHubURL:      buildGitHubURL(info.GitHubURL, content.BodyPath),
 			DiscussionURL:  discussionURLOrFallback(content, info.GitHubURL),
-			UnsubscribeURL: buildUnsubscribeURL(opts.BaseURL, sub.ID),
+			UnsubscribeURL: buildUnsubscribeURL(opts.APIURL, opts.Secret, sub.Email),
 		}
 		subject, text, htmlBody := mail.RenderDaily(data)
 
@@ -257,9 +262,17 @@ func discussionURLOrFallback(c *Content, repoGitHubURL string) string {
 	return base + "/discussions"
 }
 
-func buildUnsubscribeURL(baseURL string, subscriberID int64) string {
-	if baseURL == "" {
+func buildUnsubscribeURL(baseURL, secret, email string) string {
+	if baseURL == "" || secret == "" {
 		return ""
 	}
-	return fmt.Sprintf("%s/unsubscribe?sid=%d", strings.TrimSuffix(baseURL, "/"), subscriberID)
+	exp := time.Now().Add(365 * 24 * time.Hour).Unix()
+	msg := fmt.Sprintf("%s:%d", email, exp)
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write([]byte(msg))
+	sig := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+	payload := base64.RawURLEncoding.EncodeToString([]byte(msg))
+	token := payload + "." + sig
+	return fmt.Sprintf("%s/unsubscribe?token=%s", strings.TrimSuffix(baseURL, "/"), token)
 }
+

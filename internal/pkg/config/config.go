@@ -10,8 +10,9 @@ type Config struct {
 	HTTPAddr    string
 	DatabaseURL string
 	LogLevel    string
-	BaseURL     string
-	Secret      string
+	BaseURL    string // 웹 프론트 URL (리다이렉트용)
+	APIURL     string // API 서버 URL (메일 링크용)
+	Secret     string
 
 	GitHubToken string
 
@@ -30,6 +31,7 @@ func Load() (*Config, error) {
 		DatabaseURL:   getEnv("MAEILHAM_DB", "./data/maeilham.db"),
 		LogLevel:      getEnv("MAEILHAM_LOG_LEVEL", "info"),
 		BaseURL:       getEnv("MAEILHAM_BASE_URL", "http://localhost:5173"),
+		APIURL:        getEnv("MAEILHAM_API_URL", "http://localhost:8080"),
 		Secret:        getEnv("MAEILHAM_SECRET", "dev-secret-change-me"),
 		GitHubToken:          os.Getenv("MAEILHAM_GITHUB_TOKEN"),
 		GitHubAppID:          parseInt64(os.Getenv("MAEILHAM_GITHUB_APP_ID")),

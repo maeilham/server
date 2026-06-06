@@ -45,6 +45,7 @@ func main() {
 			Store:   subscriber.NewStore(conn),
 			Mailer:  mailer,
 			BaseURL: cfg.BaseURL,
+			APIURL:  cfg.APIURL,
 			Secret:  cfg.Secret,
 		}),
 		ReadHeaderTimeout: 10 * time.Second,

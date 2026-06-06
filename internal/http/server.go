@@ -15,6 +15,7 @@ type Deps struct {
 	Store   *subscriber.Store
 	Mailer  mail.Mailer
 	BaseURL string
+	APIURL  string
 	Secret  string
 }
 
@@ -35,11 +36,12 @@ func NewRouter(deps Deps) http.Handler {
 		store:   deps.Store,
 		mailer:  deps.Mailer,
 		baseURL: deps.BaseURL,
+		apiURL:  deps.APIURL,
 		secret:  deps.Secret,
 	}
 	r.Post("/api/subscribe", sub.handleSubscribe)
 	r.Get("/api/confirm", sub.handleConfirm)
-	r.Get("/api/unsubscribe", sub.handleUnsubscribe)
+	r.Post("/api/unsubscribe", sub.handleUnsubscribe)
 
 	return r
 }

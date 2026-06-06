@@ -2,14 +2,17 @@ package main
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/base64"
 	"flag"
 	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
-
 	"time"
 
 	"github.com/maeilham/server/internal/content"
@@ -67,6 +70,11 @@ func main() {
 			logger.Error("send-daily failed", "err", err)
 			os.Exit(1)
 		}
+	case "gen-link":
+		if err := runGenLink(cfg, args); err != nil {
+			logger.Error("gen-link failed", "err", err)
+			os.Exit(1)
+		}
 	default:
 		usage()
 		os.Exit(2)
@@ -77,7 +85,7 @@ func runSendDaily(ctx context.Context, logger *slog.Logger, conn *sql.DB, cfg *c
 	fs := flag.NewFlagSet("send-daily", flag.ExitOnError)
 	dryRun := fs.Bool("dry-run", false, "결정만 로그하고 실제 발송/DB 변경은 하지 않음")
 	dateStr := fs.String("date", "", "기준 날짜 YYYY-MM-DD (미지정 시 오늘)")
-	baseURL := fs.String("base-url", "https://maeilham.kr", "사이트 base URL (unsubscribe 링크 생성)")
+	baseURL := fs.String("base-url", cfg.BaseURL, "사이트 base URL (unsubscribe 링크 생성)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -106,6 +114,8 @@ func runSendDaily(ctx context.Context, logger *slog.Logger, conn *sql.DB, cfg *c
 		Day:       day,
 		DryRun:    *dryRun,
 		BaseURL:   *baseURL,
+		APIURL:    cfg.APIURL,
+		Secret:    cfg.Secret,
 		GitHubApp: ghApp,
 	})
 	if err != nil {
@@ -216,6 +226,45 @@ func selectRepos(ctx context.Context, conn *sql.DB, only string) ([]repoRow, err
 	return out, rows.Err()
 }
 
+func runGenLink(cfg *config.Config, args []string) error {
+	fs := flag.NewFlagSet("gen-link", flag.ExitOnError)
+	email := fs.String("email", "", "대상 이메일")
+	kind := fs.String("type", "unsubscribe", "링크 종류: unsubscribe | confirm")
+	baseURL := fs.String("base-url", cfg.BaseURL, "웹 프론트 URL")
+	apiURL := fs.String("api-url", cfg.APIURL, "API 서버 URL")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *email == "" {
+		return fmt.Errorf("--email is required")
+	}
+
+	token := makeHMACToken(*email, cfg.Secret)
+
+	var link string
+	switch *kind {
+	case "unsubscribe":
+		link = fmt.Sprintf("%s/unsubscribe?token=%s", strings.TrimSuffix(*baseURL, "/"), token)
+	case "confirm":
+		link = fmt.Sprintf("%s/api/confirm?token=%s", strings.TrimSuffix(*apiURL, "/"), token)
+	default:
+		return fmt.Errorf("unknown type: %s", *kind)
+	}
+
+	fmt.Println(link)
+	return nil
+}
+
+func makeHMACToken(email, secret string) string {
+	exp := time.Now().Add(48 * time.Hour).Unix()
+	msg := fmt.Sprintf("%s:%d", email, exp)
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write([]byte(msg))
+	sig := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+	payload := base64.RawURLEncoding.EncodeToString([]byte(msg))
+	return payload + "." + sig
+}
+
 func usage() {
 	fmt.Fprintln(os.Stderr, `usage: cron <command> [flags]
 
@@ -223,5 +272,7 @@ commands:
   sync [--repo <slug>]        콘텐츠 repo를 fetch + DB로 sync (slug 미지정 시 모든 active repo)
   send-test --to <email>      발송 어댑터 동작 확인용 메일 1통 전송
   send-daily [--dry-run] [--date YYYY-MM-DD] [--base-url <url>]
-                               활성 구독자 전체에 오늘의 메일 발송`)
+                               활성 구독자 전체에 오늘의 메일 발송
+  gen-link --email <email> [--type unsubscribe|confirm] [--base-url <url>]
+                               테스트용 링크 생성 (메일 발송 없음)`)
 }

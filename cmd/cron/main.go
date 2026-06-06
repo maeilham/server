@@ -15,6 +15,7 @@ import (
 	"github.com/maeilham/server/internal/content"
 	"github.com/maeilham/server/internal/db"
 	"github.com/maeilham/server/internal/delivery"
+	gh "github.com/maeilham/server/internal/github"
 	"github.com/maeilham/server/internal/mail"
 	"github.com/maeilham/server/internal/pkg/closeutil"
 	"github.com/maeilham/server/internal/pkg/config"
@@ -91,10 +92,21 @@ func runSendDaily(ctx context.Context, logger *slog.Logger, conn *sql.DB, cfg *c
 	}
 
 	mailer := mail.New(logger, cfg.ResendAPIKey, cfg.MailFromEmail, cfg.MailFromName)
+
+	var ghApp *gh.App
+	if cfg.GitHubAppID != 0 && cfg.GitHubAppPemPath != "" && cfg.GitHubInstallationID != 0 {
+		if app, appErr := gh.NewApp(cfg.GitHubAppID, cfg.GitHubInstallationID, cfg.GitHubAppPemPath); appErr != nil {
+			logger.Warn("github app init failed (discussion 생성 비활성화)", "err", appErr)
+		} else {
+			ghApp = app
+		}
+	}
+
 	stats, err := delivery.DailySend(ctx, logger, conn, mailer, delivery.DailySendOptions{
-		Day:     day,
-		DryRun:  *dryRun,
-		BaseURL: *baseURL,
+		Day:       day,
+		DryRun:    *dryRun,
+		BaseURL:   *baseURL,
+		GitHubApp: ghApp,
 	})
 	if err != nil {
 		return err

@@ -15,8 +15,9 @@ CREATE TABLE repos (
     github_url   TEXT    NOT NULL,              -- 'https://github.com/maeilham/backend-interview'
     display_name TEXT    NOT NULL,              -- '백엔드 면접 질문'
     description  TEXT,
-    active       INTEGER NOT NULL DEFAULT 1,
-    created_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    active                 INTEGER NOT NULL DEFAULT 1,
+    discussion_category_id TEXT,
+    created_at             TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Subscriptions (구독자 × repo, 가중치 포함)

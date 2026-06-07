@@ -39,13 +39,9 @@ func (h *subscribeHandler) handleSubscribe(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	unsub, err := h.store.IsUnsubscribed(r.Context(), req.Email)
-	if err != nil {
+	// 재구독 허용: 이전에 해지했어도 다시 구독 가능
+	if err := h.store.Reactivate(r.Context(), req.Email); err != nil {
 		jsonError(w, "서버 오류", http.StatusInternalServerError)
-		return
-	}
-	if unsub {
-		jsonError(w, "수신 거부 처리된 이메일입니다", http.StatusConflict)
 		return
 	}
 

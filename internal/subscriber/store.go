@@ -66,6 +66,15 @@ func (s *Store) Confirm(ctx context.Context, email string) error {
 	return tx.Commit()
 }
 
+// Reactivate clears unsubscribed_at so the email can re-subscribe.
+func (s *Store) Reactivate(ctx context.Context, email string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE subscribers SET unsubscribed_at = NULL, confirmed_at = NULL WHERE email = ? AND unsubscribed_at IS NOT NULL`,
+		email,
+	)
+	return err
+}
+
 // Unsubscribe sets unsubscribed_at.
 func (s *Store) Unsubscribe(ctx context.Context, email string) error {
 	_, err := s.db.ExecContext(ctx,

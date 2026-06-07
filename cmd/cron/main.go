@@ -244,7 +244,7 @@ func runGenLink(cfg *config.Config, args []string) error {
 	var link string
 	switch *kind {
 	case "unsubscribe":
-		link = fmt.Sprintf("%s/unsubscribe?token=%s", strings.TrimSuffix(*baseURL, "/"), token)
+		link = fmt.Sprintf("%s/?action=unsubscribe&token=%s", strings.TrimSuffix(*baseURL, "/"), token)
 	case "confirm":
 		link = fmt.Sprintf("%s/api/confirm?token=%s", strings.TrimSuffix(*apiURL, "/"), token)
 	default:

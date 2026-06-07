@@ -273,6 +273,6 @@ func buildUnsubscribeURL(baseURL, secret, email string) string {
 	sig := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
 	payload := base64.RawURLEncoding.EncodeToString([]byte(msg))
 	token := payload + "." + sig
-	return fmt.Sprintf("%s/unsubscribe?token=%s", strings.TrimSuffix(baseURL, "/"), token)
+	return fmt.Sprintf("%s/?action=unsubscribe&token=%s", strings.TrimSuffix(baseURL, "/"), token)
 }
 

@@ -14,6 +14,8 @@ type Config struct {
 	APIURL     string // API 서버 URL (메일 링크용)
 	Secret     string
 
+	SSHAddr string
+
 	GitHubToken string
 
 	GitHubAppID          int64
@@ -33,6 +35,7 @@ func Load() (*Config, error) {
 		BaseURL:       getEnv("MAEILHAM_BASE_URL", "http://localhost:5173"),
 		APIURL:        getEnv("MAEILHAM_API_URL", "http://localhost:8080"),
 		Secret:        getEnv("MAEILHAM_SECRET", "dev-secret-change-me"),
+		SSHAddr: getEnv("MAEILHAM_SSH_ADDR", ":2222"),
 		GitHubToken:          os.Getenv("MAEILHAM_GITHUB_TOKEN"),
 		GitHubAppID:          parseInt64(os.Getenv("MAEILHAM_GITHUB_APP_ID")),
 		GitHubAppPemPath:     getEnv("MAEILHAM_GITHUB_APP_PEM", "./maeilham-bot.pem"),

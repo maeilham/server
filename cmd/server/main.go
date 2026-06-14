@@ -15,6 +15,7 @@ import (
 	"github.com/maeilham/server/internal/pkg/config"
 	"github.com/maeilham/server/internal/pkg/logger"
 	"github.com/maeilham/server/internal/subscriber"
+	"github.com/maeilham/server/internal/terminal"
 )
 
 func main() {
@@ -38,6 +39,18 @@ func main() {
 
 	mailer := mail.New(log, cfg.ResendAPIKey, cfg.MailFromEmail, cfg.MailFromName)
 
+	// SSH 서버 시작
+	sshSrv, err := terminal.NewServer(log, terminal.WelcomeHandler)
+	if err != nil {
+		log.Error("ssh server init", "err", err)
+		os.Exit(1)
+	}
+	go func() {
+		if err := sshSrv.ListenAndServe(cfg.SSHAddr); err != nil {
+			log.Error("ssh server", "err", err)
+		}
+	}()
+
 	srv := &stdhttp.Server{
 		Addr: cfg.HTTPAddr,
 		Handler: httpsrv.NewRouter(httpsrv.Deps{
@@ -47,6 +60,7 @@ func main() {
 			BaseURL: cfg.BaseURL,
 			APIURL:  cfg.APIURL,
 			Secret:  cfg.Secret,
+			SSHAddr: cfg.SSHAddr,
 		}),
 		ReadHeaderTimeout: 10 * time.Second,
 	}

@@ -8,6 +8,7 @@ import (
 	chimw "github.com/go-chi/chi/v5/middleware"
 	"github.com/maeilham/server/internal/mail"
 	"github.com/maeilham/server/internal/subscriber"
+	"github.com/maeilham/server/internal/terminal"
 )
 
 type Deps struct {
@@ -17,6 +18,7 @@ type Deps struct {
 	BaseURL string
 	APIURL  string
 	Secret  string
+	SSHAddr string // SSH 서버 주소 (WebSocket 브리지용)
 }
 
 func NewRouter(deps Deps) http.Handler {
@@ -42,6 +44,12 @@ func NewRouter(deps Deps) http.Handler {
 	r.Post("/api/subscribe", sub.handleSubscribe)
 	r.Get("/api/confirm", sub.handleConfirm)
 	r.Post("/api/unsubscribe", sub.handleUnsubscribe)
+
+	sshAddr := deps.SSHAddr
+	if sshAddr == "" {
+		sshAddr = "localhost:2222"
+	}
+	r.Get("/ws/terminal", terminal.WSBridge(deps.Logger, sshAddr))
 
 	return r
 }

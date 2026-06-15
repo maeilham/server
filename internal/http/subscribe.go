@@ -103,6 +103,14 @@ func (h *subscribeHandler) handleUnsubscribe(w http.ResponseWriter, r *http.Requ
 
 // ── Token helpers ────────────────────────────────────────────────────────────
 
+func VerifyToken(token, secret string) (string, error) {
+	return verifyToken(token, secret)
+}
+
+func MakeToken(email, secret string) string {
+	return makeToken(email, secret)
+}
+
 func makeToken(email, secret string) string {
 	exp := time.Now().Add(48 * time.Hour).Unix()
 	msg := fmt.Sprintf("%s:%d", email, exp)

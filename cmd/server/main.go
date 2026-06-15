@@ -6,6 +6,7 @@ import (
 	stdhttp "net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -38,9 +39,38 @@ func main() {
 	log.Info("db ready", "dsn", cfg.DatabaseURL)
 
 	mailer := mail.New(log, cfg.ResendAPIKey, cfg.MailFromEmail, cfg.MailFromName)
+	store := subscriber.NewStore(conn)
+
+	termHandler := terminal.NewHandler(terminal.Deps{
+		Subscribe: func(ctx context.Context, email string) error {
+			email = strings.TrimSpace(strings.ToLower(email))
+			if err := store.Reactivate(ctx, email); err != nil {
+				return err
+			}
+			if _, err := store.Upsert(ctx, email); err != nil {
+				return err
+			}
+			token := httpsrv.MakeToken(email, cfg.Secret)
+			confirmURL := cfg.APIURL + "/api/confirm?token=" + token
+			subject, text, html := mail.RenderConfirm(confirmURL)
+			return mailer.Send(ctx, mail.Message{
+				To:       email,
+				Subject:  subject,
+				TextBody: text,
+				HTMLBody:  html,
+			})
+		},
+		Unsubscribe: func(ctx context.Context, token string) error {
+			email, err := httpsrv.VerifyToken(token, cfg.Secret)
+			if err != nil {
+				return err
+			}
+			return store.Unsubscribe(ctx, email)
+		},
+	})
 
 	// SSH 서버 시작
-	sshSrv, err := terminal.NewServer(log, terminal.WelcomeHandler)
+	sshSrv, err := terminal.NewServer(log, termHandler)
 	if err != nil {
 		log.Error("ssh server init", "err", err)
 		os.Exit(1)
@@ -55,7 +85,7 @@ func main() {
 		Addr: cfg.HTTPAddr,
 		Handler: httpsrv.NewRouter(httpsrv.Deps{
 			Logger:  log,
-			Store:   subscriber.NewStore(conn),
+			Store:   store,
 			Mailer:  mailer,
 			BaseURL: cfg.BaseURL,
 			APIURL:  cfg.APIURL,

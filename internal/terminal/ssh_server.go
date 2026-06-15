@@ -18,8 +18,8 @@ type Server struct {
 	logger  *slog.Logger
 }
 
-// SessionHandler is called for each new SSH session with an io.ReadWriter.
-type SessionHandler func(rw io.ReadWriter)
+// SessionHandler is called for each new SSH session with an io.ReadWriter and env vars.
+type SessionHandler func(rw io.ReadWriter, env map[string]string)
 
 func NewServer(logger *slog.Logger, handler SessionHandler) (*Server, error) {
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
@@ -73,8 +73,17 @@ func (s *Server) handleConn(c net.Conn) {
 			return
 		}
 		go func() {
+			env := map[string]string{}
 			for req := range requests {
 				switch req.Type {
+				case "env":
+					var kv struct{ Name, Value string }
+					if err := ssh.Unmarshal(req.Payload, &kv); err == nil {
+						env[kv.Name] = kv.Value
+					}
+					if req.WantReply {
+						req.Reply(true, nil)
+					}
 				case "pty-req":
 					if req.WantReply {
 						req.Reply(true, nil)
@@ -84,7 +93,7 @@ func (s *Server) handleConn(c net.Conn) {
 						req.Reply(true, nil)
 					}
 					go func() {
-						s.handler(ch)
+						s.handler(ch, env)
 						ch.Close()
 					}()
 				default:
@@ -96,4 +105,3 @@ func (s *Server) handleConn(c net.Conn) {
 		}()
 	}
 }
-

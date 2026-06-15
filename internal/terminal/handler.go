@@ -1,47 +1,94 @@
 package terminal
 
 import (
+	"context"
 	"fmt"
 	"io"
+	"strings"
 )
 
-// WelcomeHandler is a temporary session handler that shows a greeting and echoes input.
-// Replace with real bubbletea TUI later.
-func WelcomeHandler(rw io.ReadWriter) {
-	welcome := "\r\n" +
-		"\x1b[32m  _ __ ___   __ _  ___(_) | | |__   __ _ _ __ ___\x1b[0m\r\n" +
-		"\x1b[32m | '_ ` _ \\ / _` |/ _ \\ | | | '_ \\ / _` | '_ ` _ \\\x1b[0m\r\n" +
-		"\x1b[32m | | | | | | (_| |  __/ | | | | | | (_| | | | | | |\x1b[0m\r\n" +
-		"\x1b[32m |_| |_| |_|\\__,_|\\___|_|_|_|_| |_|\\__,_|_| |_| |_|\x1b[0m\r\n" +
-		"\r\n" +
-		"\x1b[2m  매일 아침, 질문 하나가 도착합니다.\x1b[0m\r\n\r\n" +
-		"이메일을 입력하세요: "
+type Deps struct {
+	Subscribe   func(ctx context.Context, email string) error
+	Unsubscribe func(ctx context.Context, token string) error
+}
 
-	fmt.Fprint(rw, welcome)
+func NewHandler(deps Deps) SessionHandler {
+	return func(rw io.ReadWriter, env map[string]string) {
+		action := env["MAEILHAM_ACTION"]
+		token := env["MAEILHAM_TOKEN"]
 
-	// 이메일 한 줄 읽기
-	var email []byte
-	buf := make([]byte, 1)
-	for {
-		n, err := rw.Read(buf)
-		if err != nil || n == 0 {
-			return
+		if action == "unsubscribe" && token != "" {
+			handleUnsubscribe(rw, deps, token)
+		} else {
+			handleSubscribe(rw, deps)
 		}
-		ch := buf[0]
+	}
+}
+
+func handleSubscribe(rw io.ReadWriter, deps Deps) {
+	fmt.Fprint(rw,
+		"\r\n"+
+			"\x1b[32m  _ __ ___   __ _  ___(_) | | |__   __ _ _ __ ___\x1b[0m\r\n"+
+			"\x1b[32m | '_ ` _ \\ / _` |/ _ \\ | | | '_ \\ / _` | '_ ` _ \\\x1b[0m\r\n"+
+			"\x1b[32m | | | | | | (_| |  __/ | | | | | | (_| | | | | | |\x1b[0m\r\n"+
+			"\x1b[32m |_| |_| |_|\\__,_|\\___|_|_|_|_| |_|\\__,_|_| |_| |_|\x1b[0m\r\n"+
+			"\r\n"+
+			"\x1b[2m  매일 아침, 질문 하나가 도착합니다.\x1b[0m\r\n\r\n"+
+			"이메일을 입력하세요: ",
+	)
+
+	email := readLine(rw)
+	email = strings.TrimSpace(strings.ToLower(email))
+	if email == "" {
+		return
+	}
+
+	fmt.Fprintf(rw, "\r\n")
+	if err := deps.Subscribe(context.Background(), email); err != nil {
+		fmt.Fprintf(rw, "\x1b[31m오류: %s\x1b[0m\r\n", err.Error())
+		return
+	}
+	fmt.Fprint(rw, "\x1b[32m✓\x1b[0m 확인 메일을 보냈습니다. 메일함을 확인해주세요.\r\n\r\n")
+}
+
+func handleUnsubscribe(rw io.ReadWriter, deps Deps, token string) {
+	fmt.Fprint(rw, "\r\n구독을 취소하시겠어요? (y/n): ")
+
+	line := readLine(rw)
+	fmt.Fprintf(rw, "\r\n")
+
+	if strings.TrimSpace(strings.ToLower(line)) != "y" {
+		fmt.Fprint(rw, "취소하지 않았습니다.\r\n\r\n")
+		return
+	}
+
+	if err := deps.Unsubscribe(context.Background(), token); err != nil {
+		fmt.Fprintf(rw, "\x1b[31m오류: %s\x1b[0m\r\n", err.Error())
+		return
+	}
+	fmt.Fprint(rw, "\x1b[32m✓\x1b[0m 구독이 취소됐습니다.\r\n\r\n")
+}
+
+func readLine(rw io.ReadWriter) string {
+	var buf []byte
+	b := make([]byte, 1)
+	for {
+		n, err := rw.Read(b)
+		if err != nil || n == 0 {
+			return string(buf)
+		}
+		ch := b[0]
 		if ch == '\r' || ch == '\n' {
-			break
+			return string(buf)
 		}
 		if ch == 127 || ch == 8 { // backspace
-			if len(email) > 0 {
-				email = email[:len(email)-1]
+			if len(buf) > 0 {
+				buf = buf[:len(buf)-1]
 				fmt.Fprint(rw, "\b \b")
 			}
 			continue
 		}
-		email = append(email, ch)
-		fmt.Fprint(rw, string(ch)) // echo
+		buf = append(buf, ch)
+		fmt.Fprint(rw, string(ch))
 	}
-
-	fmt.Fprintf(rw, "\r\n\r\n\x1b[33m%s\x1b[0m 로 확인 메일을 발송합니다...\r\n", string(email))
-	fmt.Fprint(rw, "\x1b[32m✓ 완료!\x1b[0m 메일함을 확인해주세요.\r\n\r\n")
 }

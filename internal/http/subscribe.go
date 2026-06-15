@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/mail"
 	"strconv"
@@ -22,6 +23,7 @@ type subscribeHandler struct {
 	baseURL string // 웹 프론트 URL (리다이렉트용)
 	apiURL  string // API 서버 URL (메일 링크용)
 	secret  string
+	logger  *slog.Logger
 }
 
 func (h *subscribeHandler) handleSubscribe(w http.ResponseWriter, r *http.Request) {
@@ -73,16 +75,26 @@ func (h *subscribeHandler) handleConfirm(w http.ResponseWriter, r *http.Request)
 	token := r.URL.Query().Get("token")
 	email, err := verifyToken(token, h.secret)
 	if err != nil {
+		h.logger.Warn("confirm: token verification failed", "err", err, "token_prefix", truncate(token, 16))
 		http.Redirect(w, r, h.baseURL+"/?status=invalid", http.StatusSeeOther)
 		return
 	}
 
 	if err := h.store.Confirm(r.Context(), email); err != nil {
+		h.logger.Warn("confirm: db error", "err", err, "email", email)
 		http.Redirect(w, r, h.baseURL+"/?status=invalid", http.StatusSeeOther)
 		return
 	}
 
+	h.logger.Info("confirm: subscription confirmed", "email", email)
 	http.Redirect(w, r, h.baseURL+"/?status=confirmed", http.StatusSeeOther)
+}
+
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "..."
 }
 
 func (h *subscribeHandler) handleUnsubscribe(w http.ResponseWriter, r *http.Request) {

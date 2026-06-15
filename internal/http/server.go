@@ -40,6 +40,7 @@ func NewRouter(deps Deps) http.Handler {
 		baseURL: deps.BaseURL,
 		apiURL:  deps.APIURL,
 		secret:  deps.Secret,
+		logger:  deps.Logger,
 	}
 	r.Post("/api/subscribe", sub.handleSubscribe)
 	r.Get("/api/confirm", sub.handleConfirm)

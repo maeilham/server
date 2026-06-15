@@ -16,10 +16,14 @@ func NewHandler(deps Deps) SessionHandler {
 	return func(rw io.ReadWriter, env map[string]string) {
 		action := env["MAEILHAM_ACTION"]
 		token := env["MAEILHAM_TOKEN"]
+		status := env["MAEILHAM_STATUS"]
 
-		if action == "unsubscribe" && token != "" {
+		switch {
+		case action == "unsubscribe" && token != "":
 			handleUnsubscribe(rw, deps, token)
-		} else {
+		case status == "confirmed":
+			handleConfirmed(rw)
+		default:
 			handleSubscribe(rw, deps)
 		}
 	}
@@ -49,6 +53,14 @@ func handleSubscribe(rw io.ReadWriter, deps Deps) {
 		return
 	}
 	fmt.Fprint(rw, "\x1b[32m✓\x1b[0m 확인 메일을 보냈습니다. 메일함을 확인해주세요.\r\n\r\n")
+}
+
+func handleConfirmed(rw io.ReadWriter) {
+	fmt.Fprint(rw,
+		"\r\n"+
+			"\x1b[32m✓ 구독이 완료됐습니다!\x1b[0m\r\n\r\n"+
+			"\x1b[2m  내일부터 매일 아침 질문이 도착합니다.\x1b[0m\r\n\r\n",
+	)
 }
 
 func handleUnsubscribe(rw io.ReadWriter, deps Deps, token string) {

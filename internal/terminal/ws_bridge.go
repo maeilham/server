@@ -52,6 +52,9 @@ func WSBridge(logger *slog.Logger, sshAddr string) http.HandlerFunc {
 		if token := r.URL.Query().Get("token"); token != "" {
 			session.Setenv("MAEILHAM_TOKEN", token)
 		}
+		if status := r.URL.Query().Get("status"); status != "" {
+			session.Setenv("MAEILHAM_STATUS", status)
+		}
 
 		// PTY 요청
 		session.RequestPty("xterm-256color", 40, 120, gossh.TerminalModes{})

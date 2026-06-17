@@ -75,6 +75,11 @@ func main() {
 			logger.Error("gen-link failed", "err", err)
 			os.Exit(1)
 		}
+	case "repo":
+		if err := runRepo(ctx, conn, args); err != nil {
+			logger.Error("repo failed", "err", err)
+			os.Exit(1)
+		}
 	default:
 		usage()
 		os.Exit(2)
@@ -265,14 +270,100 @@ func makeHMACToken(email, secret string) string {
 	return payload + "." + sig
 }
 
+func runRepo(ctx context.Context, conn *sql.DB, args []string) error {
+	if len(args) == 0 {
+		fmt.Fprintln(os.Stderr, "usage: cron repo <add|list|deactivate>")
+		return fmt.Errorf("subcommand required")
+	}
+	sub := args[0]
+	rest := args[1:]
+
+	switch sub {
+	case "add":
+		fs := flag.NewFlagSet("repo add", flag.ExitOnError)
+		slug := fs.String("slug", "", "레포 슬러그 (예: backend-interview)")
+		url := fs.String("url", "", "GitHub URL (예: https://github.com/maeilham/backend-interview)")
+		name := fs.String("name", "", "표시 이름")
+		desc := fs.String("desc", "", "설명 (선택)")
+		if err := fs.Parse(rest); err != nil {
+			return err
+		}
+		if *slug == "" || *url == "" || *name == "" {
+			return fmt.Errorf("--slug, --url, --name 은 필수입니다")
+		}
+		_, err := conn.ExecContext(ctx,
+			`INSERT INTO repos (slug, github_url, display_name, description, active)
+			 VALUES (?, ?, ?, ?, 1)
+			 ON CONFLICT(slug) DO UPDATE SET
+			   github_url = excluded.github_url,
+			   display_name = excluded.display_name,
+			   description = excluded.description,
+			   active = 1`,
+			*slug, *url, *name, *desc,
+		)
+		if err != nil {
+			return fmt.Errorf("insert repo: %w", err)
+		}
+		fmt.Printf("✓ repo 추가됨: %s\n", *slug)
+		return nil
+
+	case "list":
+		rows, err := conn.QueryContext(ctx,
+			`SELECT slug, display_name, github_url, active FROM repos ORDER BY slug`)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		fmt.Printf("%-25s %-10s %s\n", "SLUG", "ACTIVE", "URL")
+		fmt.Println(strings.Repeat("-", 70))
+		for rows.Next() {
+			var slug, name, url string
+			var active int
+			if err := rows.Scan(&slug, &name, &url, &active); err != nil {
+				return err
+			}
+			status := "✓"
+			if active == 0 {
+				status = "✗"
+			}
+			fmt.Printf("%-25s %-10s %s  (%s)\n", slug, status, url, name)
+		}
+		return rows.Err()
+
+	case "deactivate":
+		fs := flag.NewFlagSet("repo deactivate", flag.ExitOnError)
+		slug := fs.String("slug", "", "레포 슬러그")
+		if err := fs.Parse(rest); err != nil {
+			return err
+		}
+		if *slug == "" {
+			return fmt.Errorf("--slug 은 필수입니다")
+		}
+		_, err := conn.ExecContext(ctx, `UPDATE repos SET active = 0 WHERE slug = ?`, *slug)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("✓ repo 비활성화됨: %s\n", *slug)
+		return nil
+
+	default:
+		return fmt.Errorf("알 수 없는 서브커맨드: %s (add|list|deactivate)", sub)
+	}
+}
+
 func usage() {
 	fmt.Fprintln(os.Stderr, `usage: cron <command> [flags]
 
 commands:
-  sync [--repo <slug>]        콘텐츠 repo를 fetch + DB로 sync (slug 미지정 시 모든 active repo)
-  send-test --to <email>      발송 어댑터 동작 확인용 메일 1통 전송
-  send-daily [--dry-run] [--date YYYY-MM-DD] [--base-url <url>]
+  repo add --slug <slug> --url <github_url> --name <name>
+                               레포 등록/수정
+  repo list                    등록된 레포 목록
+  repo deactivate --slug <slug>
+                               레포 비활성화
+  sync [--repo <slug>]         콘텐츠 repo를 fetch + DB로 sync
+  send-test --to <email>       발송 어댑터 동작 확인용 메일 1통 전송
+  send-daily [--dry-run] [--date YYYY-MM-DD]
                                활성 구독자 전체에 오늘의 메일 발송
-  gen-link --email <email> [--type unsubscribe|confirm] [--base-url <url>]
-                               테스트용 링크 생성 (메일 발송 없음)`)
+  gen-link --email <email> [--type unsubscribe|confirm]
+                               테스트용 링크 생성`)
 }

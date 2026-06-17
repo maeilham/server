@@ -148,6 +148,45 @@ func dailyPickSeed(subscriberID int64, today time.Time) uint64 {
 	return binary.BigEndian.Uint64(sum[:8])
 }
 
+// TodayContent returns today's content across all active repos (first active repo, lowest rotation_count).
+func TodayContent(ctx context.Context, db *sql.DB) (*Content, error) {
+	var slug string
+	err := db.QueryRowContext(ctx, `SELECT slug FROM repos WHERE active = 1 ORDER BY slug LIMIT 1`).Scan(&slug)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("query active repo: %w", err)
+	}
+	return TodayContentForRepo(ctx, db, slug)
+}
+
+// ListContents returns the most recently synced contents across all active repos.
+func ListContents(ctx context.Context, db *sql.DB, limit int) ([]*Content, error) {
+	rows, err := db.QueryContext(ctx, `
+		SELECT c.repo_slug, c.content_id, c.title, c.preview, c.body_path,
+		       c.discussion_url, c.rotation_count
+		  FROM contents c
+		  JOIN repos r ON r.slug = c.repo_slug
+		 WHERE c.deleted_at IS NULL AND r.active = 1
+		 ORDER BY c.content_id DESC
+		 LIMIT ?`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list contents: %w", err)
+	}
+	defer rows.Close()
+	var out []*Content
+	for rows.Next() {
+		var c Content
+		if err := rows.Scan(&c.RepoSlug, &c.ContentID, &c.Title, &c.Preview, &c.BodyPath,
+			&c.DiscussionURL, &c.RotationCount); err != nil {
+			return nil, err
+		}
+		out = append(out, &c)
+	}
+	return out, rows.Err()
+}
+
 // TodayContentForRepo returns the single content that any subscriber of repoSlug
 // will receive today. Returns (nil, nil) if the repo has no eligible content.
 func TodayContentForRepo(ctx context.Context, db *sql.DB, repoSlug string) (*Content, error) {

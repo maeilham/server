@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/maeilham/server/internal/db"
+	"github.com/maeilham/server/internal/delivery"
 	httpsrv "github.com/maeilham/server/internal/http"
 	"github.com/maeilham/server/internal/mail"
 	"github.com/maeilham/server/internal/pkg/config"
@@ -66,6 +67,32 @@ func main() {
 				return err
 			}
 			return store.Unsubscribe(ctx, email)
+		},
+		TodayContent: func(ctx context.Context) (*terminal.ContentItem, error) {
+			c, err := delivery.TodayContent(ctx, conn)
+			if err != nil || c == nil {
+				return nil, err
+			}
+			return &terminal.ContentItem{
+				ContentID: c.ContentID,
+				Title:     c.Title,
+				Preview:   c.Preview,
+			}, nil
+		},
+		ListContents: func(ctx context.Context, limit int) ([]*terminal.ContentItem, error) {
+			items, err := delivery.ListContents(ctx, conn, limit)
+			if err != nil {
+				return nil, err
+			}
+			out := make([]*terminal.ContentItem, len(items))
+			for i, c := range items {
+				out[i] = &terminal.ContentItem{
+					ContentID: c.ContentID,
+					Title:     c.Title,
+					Preview:   c.Preview,
+				}
+			}
+			return out, nil
 		},
 	})
 

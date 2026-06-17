@@ -7,9 +7,18 @@ import (
 	"strings"
 )
 
+type ContentItem struct {
+	ContentID string
+	Title     string
+	Preview   string
+	Tags      []string
+}
+
 type Deps struct {
-	Subscribe   func(ctx context.Context, email string) error
-	Unsubscribe func(ctx context.Context, token string) error
+	Subscribe    func(ctx context.Context, email string) error
+	Unsubscribe  func(ctx context.Context, token string) error
+	TodayContent func(ctx context.Context) (*ContentItem, error)
+	ListContents func(ctx context.Context, limit int) ([]*ContentItem, error)
 }
 
 func NewHandler(deps Deps) SessionHandler {
@@ -18,41 +27,137 @@ func NewHandler(deps Deps) SessionHandler {
 		token := env["MAEILHAM_TOKEN"]
 		status := env["MAEILHAM_STATUS"]
 
-		switch {
-		case action == "unsubscribe" && token != "":
+		if action == "unsubscribe" && token != "" {
 			handleUnsubscribe(rw, deps, token)
-		case status == "confirmed":
+			return
+		}
+		if status == "confirmed" {
 			handleConfirmed(rw)
+		}
+		runREPL(rw, deps)
+	}
+}
+
+func runREPL(rw io.ReadWriter, deps Deps) {
+	printBanner(rw)
+	for {
+		fmt.Fprint(rw, "\x1b[32m>\x1b[0m ")
+		line := strings.TrimSpace(readLine(rw))
+		fmt.Fprint(rw, "\r\n")
+
+		if line == "" {
+			continue
+		}
+
+		parts := strings.Fields(line)
+		switch parts[0] {
+		case "help", "?":
+			printHelp(rw)
+		case "today":
+			cmdToday(rw, deps)
+		case "list":
+			cmdList(rw, deps)
+		case "subscribe":
+			cmdSubscribe(rw, deps, parts)
+		case "exit", "quit", "q":
+			fmt.Fprint(rw, "bye!\r\n\r\n")
+			return
 		default:
-			handleSubscribe(rw, deps)
+			fmt.Fprintf(rw, "\x1b[31m알 수 없는 명령어: %s\x1b[0m  help를 입력해보세요.\r\n\r\n", parts[0])
 		}
 	}
 }
 
-func handleSubscribe(rw io.ReadWriter, deps Deps) {
+func printBanner(rw io.ReadWriter) {
 	fmt.Fprint(rw,
 		"\r\n"+
-			"\x1b[32m  _ __ ___   __ _  ___(_) | | |__   __ _ _ __ ___\x1b[0m\r\n"+
-			"\x1b[32m | '_ ` _ \\ / _` |/ _ \\ | | | '_ \\ / _` | '_ ` _ \\\x1b[0m\r\n"+
-			"\x1b[32m | | | | | | (_| |  __/ | | | | | | (_| | | | | | |\x1b[0m\r\n"+
-			"\x1b[32m |_| |_| |_|\\__,_|\\___|_|_|_|_| |_|\\__,_|_| |_| |_|\x1b[0m\r\n"+
-			"\r\n"+
+			"\x1b[32m  매일함\x1b[0m\r\n"+
 			"\x1b[2m  매일 아침, 질문 하나가 도착합니다.\x1b[0m\r\n\r\n"+
-			"이메일을 입력하세요: ",
+			"  \x1b[2mhelp\x1b[0m을 입력하면 사용할 수 있는 명령어를 볼 수 있어요.\r\n\r\n",
 	)
+}
 
-	email := readLine(rw)
-	email = strings.TrimSpace(strings.ToLower(email))
+func printHelp(rw io.ReadWriter) {
+	fmt.Fprint(rw,
+		"\r\n"+
+			"  \x1b[1mtoday\x1b[0m          오늘의 질문\r\n"+
+			"  \x1b[1mlist\x1b[0m           최근 질문 목록\r\n"+
+			"  \x1b[1msubscribe\x1b[0m      이메일 구독\r\n"+
+			"  \x1b[1mexit\x1b[0m           종료\r\n\r\n",
+	)
+}
+
+func cmdToday(rw io.ReadWriter, deps Deps) {
+	if deps.TodayContent == nil {
+		fmt.Fprint(rw, "\x1b[31m콘텐츠 조회 기능이 설정되지 않았습니다.\x1b[0m\r\n\r\n")
+		return
+	}
+	c, err := deps.TodayContent(context.Background())
+	if err != nil {
+		fmt.Fprintf(rw, "\x1b[31m오류: %s\x1b[0m\r\n\r\n", err)
+		return
+	}
+	if c == nil {
+		fmt.Fprint(rw, "\x1b[2m아직 등록된 질문이 없습니다.\x1b[0m\r\n\r\n")
+		return
+	}
+	renderContent(rw, c)
+}
+
+func cmdList(rw io.ReadWriter, deps Deps) {
+	if deps.ListContents == nil {
+		fmt.Fprint(rw, "\x1b[31m콘텐츠 조회 기능이 설정되지 않았습니다.\x1b[0m\r\n\r\n")
+		return
+	}
+	items, err := deps.ListContents(context.Background(), 10)
+	if err != nil {
+		fmt.Fprintf(rw, "\x1b[31m오류: %s\x1b[0m\r\n\r\n", err)
+		return
+	}
+	if len(items) == 0 {
+		fmt.Fprint(rw, "\x1b[2m아직 등록된 질문이 없습니다.\x1b[0m\r\n\r\n")
+		return
+	}
+	fmt.Fprint(rw, "\r\n")
+	for _, c := range items {
+		tags := ""
+		if len(c.Tags) > 0 {
+			tags = "  \x1b[2m[" + strings.Join(c.Tags, ", ") + "]\x1b[0m"
+		}
+		fmt.Fprintf(rw, "  \x1b[1m%s\x1b[0m  %s%s\r\n", c.ContentID, c.Title, tags)
+	}
+	fmt.Fprint(rw, "\r\n")
+}
+
+func cmdSubscribe(rw io.ReadWriter, deps Deps, parts []string) {
+	var email string
+	if len(parts) >= 2 {
+		email = strings.TrimSpace(strings.ToLower(parts[1]))
+	} else {
+		fmt.Fprint(rw, "이메일을 입력하세요: ")
+		email = strings.TrimSpace(strings.ToLower(readLine(rw)))
+		fmt.Fprint(rw, "\r\n")
+	}
 	if email == "" {
 		return
 	}
-
-	fmt.Fprintf(rw, "\r\n")
 	if err := deps.Subscribe(context.Background(), email); err != nil {
-		fmt.Fprintf(rw, "\x1b[31m오류: %s\x1b[0m\r\n", err.Error())
+		fmt.Fprintf(rw, "\x1b[31m오류: %s\x1b[0m\r\n\r\n", err)
 		return
 	}
 	fmt.Fprint(rw, "\x1b[32m✓\x1b[0m 확인 메일을 보냈습니다. 메일함을 확인해주세요.\r\n\r\n")
+}
+
+func renderContent(rw io.ReadWriter, c *ContentItem) {
+	fmt.Fprint(rw, "\r\n")
+	if len(c.Tags) > 0 {
+		fmt.Fprintf(rw, "  \x1b[2m[%s]\x1b[0m\r\n", strings.Join(c.Tags, ", "))
+	}
+	fmt.Fprintf(rw, "  \x1b[1m%s\x1b[0m\r\n\r\n", c.Title)
+	for _, line := range strings.Split(c.Preview, "\n") {
+		fmt.Fprintf(rw, "  %s\r\n", line)
+	}
+	fmt.Fprint(rw, "\r\n")
 }
 
 func handleConfirmed(rw io.ReadWriter) {
@@ -65,17 +170,14 @@ func handleConfirmed(rw io.ReadWriter) {
 
 func handleUnsubscribe(rw io.ReadWriter, deps Deps, token string) {
 	fmt.Fprint(rw, "\r\n구독을 취소하시겠어요? (y/n): ")
-
 	line := readLine(rw)
 	fmt.Fprintf(rw, "\r\n")
-
 	if strings.TrimSpace(strings.ToLower(line)) != "y" {
 		fmt.Fprint(rw, "취소하지 않았습니다.\r\n\r\n")
 		return
 	}
-
 	if err := deps.Unsubscribe(context.Background(), token); err != nil {
-		fmt.Fprintf(rw, "\x1b[31m오류: %s\x1b[0m\r\n", err.Error())
+		fmt.Fprintf(rw, "\x1b[31m오류: %s\x1b[0m\r\n", err)
 		return
 	}
 	fmt.Fprint(rw, "\x1b[32m✓\x1b[0m 구독이 취소됐습니다.\r\n\r\n")
@@ -93,7 +195,7 @@ func readLine(rw io.ReadWriter) string {
 		if ch == '\r' || ch == '\n' {
 			return string(buf)
 		}
-		if ch == 127 || ch == 8 { // backspace
+		if ch == 127 || ch == 8 {
 			if len(buf) > 0 {
 				buf = buf[:len(buf)-1]
 				fmt.Fprint(rw, "\b \b")

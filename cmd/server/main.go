@@ -12,6 +12,7 @@ import (
 
 	"github.com/maeilham/server/internal/db"
 	"github.com/maeilham/server/internal/delivery"
+	gh "github.com/maeilham/server/internal/github"
 	httpsrv "github.com/maeilham/server/internal/http"
 	"github.com/maeilham/server/internal/mail"
 	"github.com/maeilham/server/internal/pkg/config"
@@ -41,6 +42,15 @@ func main() {
 
 	mailer := mail.New(log, cfg.ResendAPIKey, cfg.MailFromEmail, cfg.MailFromName)
 	store := subscriber.NewStore(conn)
+
+	var ghApp *gh.App
+	if cfg.GitHubAppID != 0 && cfg.GitHubAppPemPath != "" && cfg.GitHubInstallationID != 0 {
+		if app, appErr := gh.NewApp(cfg.GitHubAppID, cfg.GitHubInstallationID, cfg.GitHubAppPemPath); appErr != nil {
+			log.Warn("github app init failed (discussion 생성 비활성화)", "err", appErr)
+		} else {
+			ghApp = app
+		}
+	}
 
 	termHandler := terminal.NewHandler(terminal.Deps{
 		Subscribe: func(ctx context.Context, email string) error {
@@ -73,13 +83,20 @@ func main() {
 			if err != nil || c == nil {
 				return nil, err
 			}
-			return &terminal.ContentItem{
+			item := &terminal.ContentItem{
 				ContentID: c.ContentID,
 				Title:     c.Title,
 				Preview:   c.Preview,
 				GitHubURL: c.GitHubURL,
 				BodyPath:  c.BodyPath,
-			}, nil
+			}
+			if c.DiscussionURL.Valid {
+				item.DiscussionURL = c.DiscussionURL.String
+			}
+			return item, nil
+		},
+		EnsureDiscussion: func(ctx context.Context, contentID string) (string, error) {
+			return delivery.EnsureDiscussion(ctx, ghApp, conn, contentID)
 		},
 		ListContents: func(ctx context.Context, limit int) ([]*terminal.ContentItem, error) {
 			items, err := delivery.ListContents(ctx, conn, limit)

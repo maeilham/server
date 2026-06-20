@@ -11,20 +11,22 @@ import (
 )
 
 type ContentItem struct {
-	ContentID string
-	Title     string
-	Preview   string
-	Tags      []string
-	GitHubURL string // https://github.com/owner/repo
-	BodyPath  string // content/0001-slug.md
+	ContentID     string
+	Title         string
+	Preview       string
+	Tags          []string
+	GitHubURL     string // https://github.com/owner/repo
+	BodyPath      string // content/0001-slug.md
+	DiscussionURL string
 }
 
 type Deps struct {
-	Subscribe    func(ctx context.Context, email string) error
-	Unsubscribe  func(ctx context.Context, token string) error
-	TodayContent func(ctx context.Context) (*ContentItem, error)
-	ListContents func(ctx context.Context, limit int) ([]*ContentItem, error)
-	GetContent   func(ctx context.Context, contentID string) (*ContentItem, error)
+	Subscribe        func(ctx context.Context, email string) error
+	Unsubscribe      func(ctx context.Context, token string) error
+	TodayContent     func(ctx context.Context) (*ContentItem, error)
+	ListContents     func(ctx context.Context, limit int) ([]*ContentItem, error)
+	GetContent       func(ctx context.Context, contentID string) (*ContentItem, error)
+	EnsureDiscussion func(ctx context.Context, contentID string) (string, error)
 }
 
 func NewHandler(deps Deps) SessionHandler {
@@ -109,6 +111,11 @@ func cmdToday(rw io.ReadWriter, deps Deps) {
 	if c == nil {
 		fmt.Fprint(rw, "\x1b[2m아직 등록된 질문이 없습니다.\x1b[0m\r\n\r\n")
 		return
+	}
+	if c.DiscussionURL == "" && deps.EnsureDiscussion != nil {
+		if url, err := deps.EnsureDiscussion(context.Background(), c.ContentID); err == nil {
+			c.DiscussionURL = url
+		}
 	}
 	renderContent(rw, c)
 }
@@ -220,6 +227,9 @@ func renderContent(rw io.ReadWriter, c *ContentItem) {
 	fmt.Fprintf(rw, "  \x1b[1m%s\x1b[0m\r\n\r\n", c.Title)
 	for _, line := range strings.Split(c.Preview, "\n") {
 		fmt.Fprintf(rw, "  %s\r\n", line)
+	}
+	if c.DiscussionURL != "" {
+		fmt.Fprintf(rw, "\r\n  \x1b[2m→ %s\x1b[0m\r\n", c.DiscussionURL)
 	}
 	fmt.Fprint(rw, "\r\n")
 }

@@ -16,6 +16,25 @@ import (
 	"github.com/maeilham/server/internal/pkg/closeutil"
 )
 
+// EnsureDiscussion returns the Discussion URL for contentID, creating one if it doesn't exist yet.
+func EnsureDiscussion(ctx context.Context, app *gh.App, db *sql.DB, contentID string) (string, error) {
+	if app == nil {
+		return "", nil
+	}
+	c, err := GetContent(ctx, db, contentID)
+	if err != nil || c == nil {
+		return "", err
+	}
+	if c.DiscussionURL.Valid && c.DiscussionURL.String != "" {
+		return c.DiscussionURL.String, nil
+	}
+	repoInfo, err := loadRepoInfo(ctx, db)
+	if err != nil {
+		return "", err
+	}
+	return createDiscussion(ctx, app, db, c, repoInfo[c.RepoSlug])
+}
+
 type DailySendStats struct {
 	Subscribers int // 활성 구독자 수
 	Picked      int // 콘텐츠가 매칭된 사용자 수

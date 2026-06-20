@@ -77,6 +77,8 @@ func main() {
 				ContentID: c.ContentID,
 				Title:     c.Title,
 				Preview:   c.Preview,
+				GitHubURL: c.GitHubURL,
+				BodyPath:  c.BodyPath,
 			}, nil
 		},
 		ListContents: func(ctx context.Context, limit int) ([]*terminal.ContentItem, error) {
@@ -90,9 +92,24 @@ func main() {
 					ContentID: c.ContentID,
 					Title:     c.Title,
 					Preview:   c.Preview,
+					GitHubURL: c.GitHubURL,
+					BodyPath:  c.BodyPath,
 				}
 			}
 			return out, nil
+		},
+		GetContent: func(ctx context.Context, contentID string) (*terminal.ContentItem, error) {
+			c, err := delivery.GetContent(ctx, conn, contentID)
+			if err != nil || c == nil {
+				return nil, err
+			}
+			return &terminal.ContentItem{
+				ContentID: c.ContentID,
+				Title:     c.Title,
+				Preview:   c.Preview,
+				GitHubURL: c.GitHubURL,
+				BodyPath:  c.BodyPath,
+			}, nil
 		},
 	})
 

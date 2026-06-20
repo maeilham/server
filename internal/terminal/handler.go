@@ -4,7 +4,10 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net/http"
 	"strings"
+
+	"github.com/charmbracelet/glamour"
 )
 
 type ContentItem struct {
@@ -12,6 +15,8 @@ type ContentItem struct {
 	Title     string
 	Preview   string
 	Tags      []string
+	GitHubURL string // https://github.com/owner/repo
+	BodyPath  string // content/0001-slug.md
 }
 
 type Deps struct {
@@ -19,6 +24,7 @@ type Deps struct {
 	Unsubscribe  func(ctx context.Context, token string) error
 	TodayContent func(ctx context.Context) (*ContentItem, error)
 	ListContents func(ctx context.Context, limit int) ([]*ContentItem, error)
+	GetContent   func(ctx context.Context, contentID string) (*ContentItem, error)
 }
 
 func NewHandler(deps Deps) SessionHandler {
@@ -57,6 +63,8 @@ func runREPL(rw io.ReadWriter, deps Deps) {
 			cmdToday(rw, deps)
 		case "list":
 			cmdList(rw, deps)
+		case "show":
+			cmdShow(rw, deps, parts)
 		case "subscribe":
 			cmdSubscribe(rw, deps, parts)
 		case "exit", "quit", "q":
@@ -80,10 +88,11 @@ func printBanner(rw io.ReadWriter) {
 func printHelp(rw io.ReadWriter) {
 	fmt.Fprint(rw,
 		"\r\n"+
-			"  \x1b[1mtoday\x1b[0m          오늘의 질문\r\n"+
-			"  \x1b[1mlist\x1b[0m           최근 질문 목록\r\n"+
-			"  \x1b[1msubscribe\x1b[0m      이메일 구독\r\n"+
-			"  \x1b[1mexit\x1b[0m           종료\r\n\r\n",
+			"  \x1b[1mtoday\x1b[0m            오늘의 질문\r\n"+
+			"  \x1b[1mlist\x1b[0m             최근 질문 목록\r\n"+
+			"  \x1b[1mshow <id>\x1b[0m        질문 본문 보기\r\n"+
+			"  \x1b[1msubscribe\x1b[0m        이메일 구독\r\n"+
+			"  \x1b[1mexit\x1b[0m             종료\r\n\r\n",
 	)
 }
 
@@ -146,6 +155,61 @@ func cmdSubscribe(rw io.ReadWriter, deps Deps, parts []string) {
 		return
 	}
 	fmt.Fprint(rw, "\x1b[32m✓\x1b[0m 확인 메일을 보냈습니다. 메일함을 확인해주세요.\r\n\r\n")
+}
+
+func cmdShow(rw io.ReadWriter, deps Deps, parts []string) {
+	if len(parts) < 2 {
+		fmt.Fprint(rw, "사용법: show <id>  (예: show 0001)\r\n\r\n")
+		return
+	}
+	if deps.GetContent == nil {
+		fmt.Fprint(rw, "\x1b[31m콘텐츠 조회 기능이 설정되지 않았습니다.\x1b[0m\r\n\r\n")
+		return
+	}
+	c, err := deps.GetContent(context.Background(), parts[1])
+	if err != nil {
+		fmt.Fprintf(rw, "\x1b[31m오류: %s\x1b[0m\r\n\r\n", err)
+		return
+	}
+	if c == nil {
+		fmt.Fprintf(rw, "\x1b[31m%s 를 찾을 수 없습니다.\x1b[0m\r\n\r\n", parts[1])
+		return
+	}
+	if c.GitHubURL == "" || c.BodyPath == "" {
+		renderContent(rw, c)
+		return
+	}
+	// https://github.com/owner/repo → https://raw.githubusercontent.com/owner/repo/main/path
+	rawURL := strings.Replace(c.GitHubURL, "https://github.com/", "https://raw.githubusercontent.com/", 1)
+	rawURL = rawURL + "/main/" + c.BodyPath
+
+	resp, err := http.Get(rawURL)
+	if err != nil || resp.StatusCode != 200 {
+		renderContent(rw, c)
+		return
+	}
+	defer resp.Body.Close()
+
+	var raw strings.Builder
+	buf := make([]byte, 4096)
+	for {
+		n, err := resp.Body.Read(buf)
+		if n > 0 {
+			raw.Write(buf[:n])
+		}
+		if err != nil {
+			break
+		}
+	}
+
+	rendered, err := glamour.Render(raw.String(), "dark")
+	if err != nil {
+		renderContent(rw, c)
+		return
+	}
+	// glamour는 \n 쓰므로 터미널용 \r\n 으로 변환
+	out := strings.ReplaceAll(rendered, "\n", "\r\n")
+	fmt.Fprint(rw, out)
 }
 
 func renderContent(rw io.ReadWriter, c *ContentItem) {

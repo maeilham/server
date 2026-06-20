@@ -24,6 +24,7 @@ type Content struct {
 	Title         string
 	Preview       string
 	BodyPath      string
+	GitHubURL     string // repos.github_url (raw URL 구성용)
 	DiscussionURL sql.NullString
 	RotationCount int
 }
@@ -148,6 +149,29 @@ func dailyPickSeed(subscriberID int64, today time.Time) uint64 {
 	return binary.BigEndian.Uint64(sum[:8])
 }
 
+// GetContent returns a single content item by contentID across all active repos.
+func GetContent(ctx context.Context, db *sql.DB, contentID string) (*Content, error) {
+	var c Content
+	err := db.QueryRowContext(ctx, `
+		SELECT c.repo_slug, c.content_id, c.title, c.preview, c.body_path,
+		       r.github_url, c.discussion_url, c.rotation_count
+		  FROM contents c
+		  JOIN repos r ON r.slug = c.repo_slug
+		 WHERE c.content_id = ? AND c.deleted_at IS NULL AND r.active = 1
+		 LIMIT 1`, contentID,
+	).Scan(
+		&c.RepoSlug, &c.ContentID, &c.Title, &c.Preview, &c.BodyPath,
+		&c.GitHubURL, &c.DiscussionURL, &c.RotationCount,
+	)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get content %s: %w", contentID, err)
+	}
+	return &c, nil
+}
+
 // TodayContent returns today's content across all active repos (first active repo, lowest rotation_count).
 func TodayContent(ctx context.Context, db *sql.DB) (*Content, error) {
 	var slug string
@@ -165,7 +189,7 @@ func TodayContent(ctx context.Context, db *sql.DB) (*Content, error) {
 func ListContents(ctx context.Context, db *sql.DB, limit int) ([]*Content, error) {
 	rows, err := db.QueryContext(ctx, `
 		SELECT c.repo_slug, c.content_id, c.title, c.preview, c.body_path,
-		       c.discussion_url, c.rotation_count
+		       r.github_url, c.discussion_url, c.rotation_count
 		  FROM contents c
 		  JOIN repos r ON r.slug = c.repo_slug
 		 WHERE c.deleted_at IS NULL AND r.active = 1
@@ -179,7 +203,7 @@ func ListContents(ctx context.Context, db *sql.DB, limit int) ([]*Content, error
 	for rows.Next() {
 		var c Content
 		if err := rows.Scan(&c.RepoSlug, &c.ContentID, &c.Title, &c.Preview, &c.BodyPath,
-			&c.DiscussionURL, &c.RotationCount); err != nil {
+			&c.GitHubURL, &c.DiscussionURL, &c.RotationCount); err != nil {
 			return nil, err
 		}
 		out = append(out, &c)
@@ -192,15 +216,16 @@ func ListContents(ctx context.Context, db *sql.DB, limit int) ([]*Content, error
 func TodayContentForRepo(ctx context.Context, db *sql.DB, repoSlug string) (*Content, error) {
 	var c Content
 	err := db.QueryRowContext(ctx, `
-		SELECT repo_slug, content_id, title, preview, body_path,
-		       discussion_url, rotation_count
-		  FROM contents
-		 WHERE repo_slug = ? AND deleted_at IS NULL
-		 ORDER BY rotation_count ASC, content_id ASC
+		SELECT c.repo_slug, c.content_id, c.title, c.preview, c.body_path,
+		       r.github_url, c.discussion_url, c.rotation_count
+		  FROM contents c
+		  JOIN repos r ON r.slug = c.repo_slug
+		 WHERE c.repo_slug = ? AND c.deleted_at IS NULL
+		 ORDER BY c.rotation_count ASC, c.content_id ASC
 		 LIMIT 1`, repoSlug,
 	).Scan(
 		&c.RepoSlug, &c.ContentID, &c.Title, &c.Preview, &c.BodyPath,
-		&c.DiscussionURL, &c.RotationCount,
+		&c.GitHubURL, &c.DiscussionURL, &c.RotationCount,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil

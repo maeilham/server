@@ -19,7 +19,7 @@ func (a *App) RepoMeta(ctx context.Context, owner, repo string) (repoID string, 
 		} `json:"repository"`
 	}
 
-	err = a.GraphQL(ctx, `
+	err = a.GraphQLForRepo(ctx, owner, repo, `
 		query($owner: String!, $repo: String!) {
 			repository(owner: $owner, name: $repo) {
 				id
@@ -42,7 +42,7 @@ func (a *App) RepoMeta(ctx context.Context, owner, repo string) (repoID string, 
 }
 
 // CreateDiscussion opens a new Discussion and returns its URL and node ID.
-func (a *App) CreateDiscussion(ctx context.Context, repoID, categoryID, title, body string) (url, nodeID string, err error) {
+func (a *App) CreateDiscussion(ctx context.Context, owner, repo, repoID, categoryID, title, body string) (url, nodeID string, err error) {
 	var result struct {
 		CreateDiscussion struct {
 			Discussion struct {
@@ -52,7 +52,7 @@ func (a *App) CreateDiscussion(ctx context.Context, repoID, categoryID, title, b
 		} `json:"createDiscussion"`
 	}
 
-	err = a.GraphQL(ctx, `
+	err = a.GraphQLForRepo(ctx, owner, repo, `
 		mutation($repoID: ID!, $categoryID: ID!, $title: String!, $body: String!) {
 			createDiscussion(input: {
 				repositoryId: $repoID
@@ -81,7 +81,7 @@ func (a *App) CreateDiscussion(ctx context.Context, repoID, categoryID, title, b
 }
 
 // UpdateDiscussionTitle updates only the title of an existing Discussion.
-func (a *App) UpdateDiscussionTitle(ctx context.Context, nodeID, title string) error {
+func (a *App) UpdateDiscussionTitle(ctx context.Context, owner, repo, nodeID, title string) error {
 	var result struct {
 		UpdateDiscussion struct {
 			Discussion struct {
@@ -90,7 +90,7 @@ func (a *App) UpdateDiscussionTitle(ctx context.Context, nodeID, title string) e
 		} `json:"updateDiscussion"`
 	}
 
-	return a.GraphQL(ctx, `
+	return a.GraphQLForRepo(ctx, owner, repo, `
 		mutation($nodeID: ID!, $title: String!) {
 			updateDiscussion(input: {
 				discussionId: $nodeID

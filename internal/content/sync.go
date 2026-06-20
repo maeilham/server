@@ -99,7 +99,7 @@ func Sync(
 			stats.Updated++
 			if app != nil && existing.discussionNodeID != "" {
 				title := fmt.Sprintf("[매일함] %s", parsed.Frontmatter.Title)
-				if err := app.UpdateDiscussionTitle(ctx, existing.discussionNodeID, title); err != nil {
+				if err := app.UpdateDiscussionTitle(ctx, owner, repoName, existing.discussionNodeID, title); err != nil {
 					logger.Warn("discussion title update failed (non-fatal)", "content", contentID, "err", err)
 				}
 			}

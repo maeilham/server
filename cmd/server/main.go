@@ -96,7 +96,11 @@ func main() {
 			return item, nil
 		},
 		EnsureDiscussion: func(ctx context.Context, contentID string) (string, error) {
-			return delivery.EnsureDiscussion(ctx, ghApp, conn, contentID)
+			url, err := delivery.EnsureDiscussion(ctx, ghApp, conn, contentID)
+			if err != nil {
+				log.Warn("discussion 생성 실패", "content_id", contentID, "err", err)
+			}
+			return url, err
 		},
 		ListContents: func(ctx context.Context, limit int) ([]*terminal.ContentItem, error) {
 			items, err := delivery.ListContents(ctx, conn, limit)

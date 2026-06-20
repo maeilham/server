@@ -245,7 +245,7 @@ func createDiscussion(ctx context.Context, app *gh.App, db *sql.DB, c *Content, 
 	body := fmt.Sprintf("## %s\n\n%s\n\n---\n*매일함에서 자동으로 생성된 Discussion입니다. 자유롭게 답변을 달아주세요!*",
 		c.Title, c.Preview)
 
-	url, nodeID, err := app.CreateDiscussion(ctx, repoID, categoryID, title, body)
+	url, nodeID, err := app.CreateDiscussion(ctx, owner, repo, repoID, categoryID, title, body)
 	if err != nil {
 		return "", err
 	}

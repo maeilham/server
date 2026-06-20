@@ -22,16 +22,21 @@ import (
 
 const apiBase = "https://api.github.com"
 
+type cachedToken struct {
+	token   string
+	expires time.Time
+}
+
 // App authenticates as a GitHub App and vends short-lived installation tokens.
 type App struct {
 	appID          int64
-	installationID int64
+	installationID int64 // default installation
 	privateKey     *rsa.PrivateKey
 	http           *http.Client
 
-	mu      sync.Mutex
-	cached  string
-	expires time.Time
+	mu             sync.Mutex
+	tokenCache     map[int64]cachedToken // installationID → token
+	installCache   map[string]int64      // "owner/repo" → installationID
 }
 
 func NewApp(appID, installationID int64, pemPath string) (*App, error) {
@@ -48,24 +53,39 @@ func NewApp(appID, installationID int64, pemPath string) (*App, error) {
 		installationID: installationID,
 		privateKey:     key,
 		http:           &http.Client{Timeout: 15 * time.Second},
+		tokenCache:     make(map[int64]cachedToken),
+		installCache:   make(map[string]int64),
 	}, nil
 }
 
-// Token returns a valid installation access token, refreshing when needed.
+// Token returns a valid token for the default installation.
 func (a *App) Token(ctx context.Context) (string, error) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
+	return a.tokenForInstallation(ctx, a.installationID)
+}
 
-	if a.cached != "" && time.Now().Before(a.expires.Add(-2*time.Minute)) {
-		return a.cached, nil
+// TokenForRepo returns a valid token for the installation covering owner/repo.
+func (a *App) TokenForRepo(ctx context.Context, owner, repo string) (string, error) {
+	id, err := a.repoInstallationID(ctx, owner, repo)
+	if err != nil {
+		return "", err
 	}
+	return a.tokenForInstallation(ctx, id)
+}
+
+func (a *App) tokenForInstallation(ctx context.Context, installationID int64) (string, error) {
+	a.mu.Lock()
+	if c, ok := a.tokenCache[installationID]; ok && time.Now().Before(c.expires.Add(-2*time.Minute)) {
+		a.mu.Unlock()
+		return c.token, nil
+	}
+	a.mu.Unlock()
 
 	jwt, err := a.makeJWT()
 	if err != nil {
 		return "", fmt.Errorf("make jwt: %w", err)
 	}
 
-	url := fmt.Sprintf("%s/app/installations/%d/access_tokens", apiBase, a.installationID)
+	url := fmt.Sprintf("%s/app/installations/%d/access_tokens", apiBase, installationID)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, nil)
 	if err != nil {
 		return "", err
@@ -93,18 +113,82 @@ func (a *App) Token(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("decode token response: %w", err)
 	}
 
-	a.cached = result.Token
-	a.expires = result.ExpiresAt
-	return a.cached, nil
+	a.mu.Lock()
+	a.tokenCache[installationID] = cachedToken{token: result.Token, expires: result.ExpiresAt}
+	a.mu.Unlock()
+
+	return result.Token, nil
 }
 
-// GraphQL executes a GraphQL query/mutation authenticated as the installation.
+// repoInstallationID fetches the installation ID for a specific repo, with in-memory cache.
+func (a *App) repoInstallationID(ctx context.Context, owner, repo string) (int64, error) {
+	key := owner + "/" + repo
+
+	a.mu.Lock()
+	if id, ok := a.installCache[key]; ok {
+		a.mu.Unlock()
+		return id, nil
+	}
+	a.mu.Unlock()
+
+	jwt, err := a.makeJWT()
+	if err != nil {
+		return 0, err
+	}
+
+	url := fmt.Sprintf("%s/repos/%s/%s/installation", apiBase, owner, repo)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return 0, err
+	}
+	req.Header.Set("Authorization", "Bearer "+jwt)
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+
+	resp, err := a.http.Do(req)
+	if err != nil {
+		return 0, fmt.Errorf("repo installation request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return 0, fmt.Errorf("repo installation status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var result struct {
+		ID int64 `json:"id"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return 0, fmt.Errorf("decode installation response: %w", err)
+	}
+
+	a.mu.Lock()
+	a.installCache[key] = result.ID
+	a.mu.Unlock()
+
+	return result.ID, nil
+}
+
+// GraphQL executes a GraphQL query using the default installation token.
 func (a *App) GraphQL(ctx context.Context, query string, variables map[string]any, out any) error {
 	token, err := a.Token(ctx)
 	if err != nil {
 		return err
 	}
+	return a.graphQL(ctx, token, query, variables, out)
+}
 
+// GraphQLForRepo executes a GraphQL query using the installation token for owner/repo.
+func (a *App) GraphQLForRepo(ctx context.Context, owner, repo, query string, variables map[string]any, out any) error {
+	token, err := a.TokenForRepo(ctx, owner, repo)
+	if err != nil {
+		return err
+	}
+	return a.graphQL(ctx, token, query, variables, out)
+}
+
+func (a *App) graphQL(ctx context.Context, token, query string, variables map[string]any, out any) error {
 	body, err := json.Marshal(map[string]any{
 		"query":     query,
 		"variables": variables,

@@ -34,9 +34,6 @@ tags: [infra, scaling]
 	if !strings.HasPrefix(p.Body, "## 질문") {
 		t.Errorf("body should start with ## 질문, got %q", p.Body)
 	}
-	if p.BodyHash == "" || len(p.BodyHash) != 64 {
-		t.Errorf("body hash should be 64-char hex, got %q", p.BodyHash)
-	}
 }
 
 func TestParse_WithSource(t *testing.T) {
@@ -88,35 +85,6 @@ func TestParse_CRLF(t *testing.T) {
 	raw := []byte("---\r\ntitle: \"T\"\r\npreview: \"P\"\r\n---\r\n\r\nbody\r\n")
 	if _, err := Parse(raw); err != nil {
 		t.Fatalf("CRLF should be supported: %v", err)
-	}
-}
-
-func TestParse_HashIsDeterministic(t *testing.T) {
-	raw := []byte(`---
-title: "T"
-preview: "P"
----
-same body`)
-	p1, _ := Parse(raw)
-	p2, _ := Parse(raw)
-	if p1.BodyHash != p2.BodyHash {
-		t.Errorf("hash should be deterministic: %s vs %s", p1.BodyHash, p2.BodyHash)
-	}
-}
-
-func TestParse_HashChangesWithBody(t *testing.T) {
-	a, _ := Parse([]byte(`---
-title: "T"
-preview: "P"
----
-A`))
-	b, _ := Parse([]byte(`---
-title: "T"
-preview: "P"
----
-B`))
-	if a.BodyHash == b.BodyHash {
-		t.Errorf("hash should differ between distinct bodies")
 	}
 }
 

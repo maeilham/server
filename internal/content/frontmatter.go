@@ -2,8 +2,6 @@ package content
 
 import (
 	"bytes"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"regexp"
 
@@ -25,7 +23,6 @@ type Frontmatter struct {
 type ParsedContent struct {
 	Frontmatter Frontmatter
 	Body        string
-	BodyHash    string
 }
 
 var frontmatterRe = regexp.MustCompile(`(?s)\A---\s*\r?\n(.*?)\r?\n---\s*\r?\n(.*)\z`)
@@ -45,11 +42,9 @@ func Parse(raw []byte) (*ParsedContent, error) {
 	}
 
 	body := bytes.TrimSpace(m[2])
-	sum := sha256.Sum256(body)
 	return &ParsedContent{
 		Frontmatter: fm,
 		Body:        string(body),
-		BodyHash:    hex.EncodeToString(sum[:]),
 	}, nil
 }
 

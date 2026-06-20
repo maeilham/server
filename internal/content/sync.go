@@ -159,7 +159,7 @@ func upsert(
 
 	var existing sql.NullString
 	err = db.QueryRowContext(ctx,
-		`SELECT body_hash FROM contents WHERE repo_slug = ? AND content_id = ?`,
+		`SELECT content_id FROM contents WHERE repo_slug = ? AND content_id = ?`,
 		repoSlug, contentID,
 	).Scan(&existing)
 
@@ -168,10 +168,10 @@ func upsert(
 		_, err = db.ExecContext(ctx, `
 			INSERT INTO contents
 			  (repo_slug, content_id, title, preview, tags, source_url, source_author,
-			   body_path, body_hash, github_sha)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			   body_path, github_sha)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			repoSlug, contentID, p.Frontmatter.Title, p.Frontmatter.Preview,
-			tagsJSON, sourceURL, sourceAuthor, bodyPath, p.BodyHash, githubSHA)
+			tagsJSON, sourceURL, sourceAuthor, bodyPath, githubSHA)
 		if err != nil {
 			return false, err
 		}
@@ -188,13 +188,12 @@ func upsert(
 		       source_url    = ?,
 		       source_author = ?,
 		       body_path     = ?,
-		       body_hash     = ?,
 		       github_sha    = ?,
 		       deleted_at    = NULL,
 		       synced_at     = CURRENT_TIMESTAMP
 		 WHERE repo_slug = ? AND content_id = ?`,
 		p.Frontmatter.Title, p.Frontmatter.Preview, tagsJSON, sourceURL, sourceAuthor,
-		bodyPath, p.BodyHash, githubSHA, repoSlug, contentID)
+		bodyPath, githubSHA, repoSlug, contentID)
 	return false, err
 }
 

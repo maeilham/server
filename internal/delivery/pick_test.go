@@ -49,10 +49,10 @@ func insertRepo(t *testing.T, db *sql.DB, slug string) {
 func insertContent(t *testing.T, db *sql.DB, repoSlug, contentID string) {
 	t.Helper()
 	mustExec(t, db, `
-		INSERT INTO contents(repo_slug, content_id, title, preview, body_path, body_hash)
-		VALUES (?, ?, ?, ?, ?, ?)`,
+		INSERT INTO contents(repo_slug, content_id, title, preview, body_path)
+		VALUES (?, ?, ?, ?, ?)`,
 		repoSlug, contentID, "title-"+contentID, "preview-"+contentID,
-		"content/"+contentID+".md", "hash-"+contentID)
+		"content/"+contentID+".md")
 }
 
 func subscribe(t *testing.T, db *sql.DB, subID int64, repoSlug string, weight int) {

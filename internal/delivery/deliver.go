@@ -226,15 +226,14 @@ func createDiscussion(ctx context.Context, app *gh.App, db *sql.DB, c *Content, 
 	body := fmt.Sprintf("## %s\n\n%s\n\n---\n*매일함에서 자동으로 생성된 Discussion입니다. 자유롭게 답변을 달아주세요!*",
 		c.Title, c.Preview)
 
-	url, err := app.CreateDiscussion(ctx, repoID, categoryID, title, body)
+	url, nodeID, err := app.CreateDiscussion(ctx, repoID, categoryID, title, body)
 	if err != nil {
 		return "", err
 	}
 
-	// DB에 저장
 	_, _ = db.ExecContext(ctx,
-		`UPDATE contents SET discussion_url = ? WHERE repo_slug = ? AND content_id = ?`,
-		url, c.RepoSlug, c.ContentID)
+		`UPDATE contents SET discussion_url = ?, discussion_node_id = ? WHERE repo_slug = ? AND content_id = ?`,
+		url, nodeID, c.RepoSlug, c.ContentID)
 
 	return url, nil
 }

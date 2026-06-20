@@ -42,7 +42,8 @@ CREATE TABLE contents (
     github_sha     TEXT,                          -- GitHub blob sha (변경 감지용)
     sent_at        TIMESTAMP,                    -- 마지막 발송 시각
     rotation_count INTEGER NOT NULL DEFAULT 0,
-    discussion_url TEXT,
+    discussion_url     TEXT,
+    discussion_node_id TEXT,
     synced_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     deleted_at     TIMESTAMP,
     PRIMARY KEY (repo_slug, content_id)

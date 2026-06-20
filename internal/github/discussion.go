@@ -41,17 +41,18 @@ func (a *App) RepoMeta(ctx context.Context, owner, repo string) (repoID string, 
 	return repoID, categories, nil
 }
 
-// CreateDiscussion opens a new Discussion and returns its URL.
-func (a *App) CreateDiscussion(ctx context.Context, repoID, categoryID, title, body string) (string, error) {
+// CreateDiscussion opens a new Discussion and returns its URL and node ID.
+func (a *App) CreateDiscussion(ctx context.Context, repoID, categoryID, title, body string) (url, nodeID string, err error) {
 	var result struct {
 		CreateDiscussion struct {
 			Discussion struct {
+				ID  string `json:"id"`
 				URL string `json:"url"`
 			} `json:"discussion"`
 		} `json:"createDiscussion"`
 	}
 
-	err := a.GraphQL(ctx, `
+	err = a.GraphQL(ctx, `
 		mutation($repoID: ID!, $categoryID: ID!, $title: String!, $body: String!) {
 			createDiscussion(input: {
 				repositoryId: $repoID
@@ -59,7 +60,7 @@ func (a *App) CreateDiscussion(ctx context.Context, repoID, categoryID, title, b
 				title:        $title
 				body:         $body
 			}) {
-				discussion { url }
+				discussion { id url }
 			}
 		}
 	`, map[string]any{
@@ -69,12 +70,37 @@ func (a *App) CreateDiscussion(ctx context.Context, repoID, categoryID, title, b
 		"body":       body,
 	}, &result)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 
-	url := result.CreateDiscussion.Discussion.URL
+	url = result.CreateDiscussion.Discussion.URL
 	if url == "" {
-		return "", fmt.Errorf("empty discussion URL in response")
+		return "", "", fmt.Errorf("empty discussion URL in response")
 	}
-	return url, nil
+	return url, result.CreateDiscussion.Discussion.ID, nil
+}
+
+// UpdateDiscussionTitle updates only the title of an existing Discussion.
+func (a *App) UpdateDiscussionTitle(ctx context.Context, nodeID, title string) error {
+	var result struct {
+		UpdateDiscussion struct {
+			Discussion struct {
+				ID string `json:"id"`
+			} `json:"discussion"`
+		} `json:"updateDiscussion"`
+	}
+
+	return a.GraphQL(ctx, `
+		mutation($nodeID: ID!, $title: String!) {
+			updateDiscussion(input: {
+				discussionId: $nodeID
+				title:        $title
+			}) {
+				discussion { id }
+			}
+		}
+	`, map[string]any{
+		"nodeID": nodeID,
+		"title":  title,
+	}, &result)
 }

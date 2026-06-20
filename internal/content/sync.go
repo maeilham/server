@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"strings"
 
+	gh "github.com/maeilham/server/internal/github"
 	"github.com/maeilham/server/internal/pkg/closeutil"
 )
 
@@ -27,11 +28,13 @@ var filenameRe = regexp.MustCompile(`^(\d{4})-[a-z0-9-]+\.md$`)
 
 // Sync diffs the repo's content/ tree against the DB and applies inserts/updates/deletes.
 // Only files whose GitHub blob SHA differs from the stored one are fetched via raw URL.
+// If app is non-nil, Discussion titles are updated when content changes.
 func Sync(
 	ctx context.Context,
 	logger *slog.Logger,
 	db *sql.DB,
-	gh *GitHubClient,
+	ghClient *GitHubClient,
+	app *gh.App,
 	repoSlug, githubURL, ref string,
 ) (*SyncStats, error) {
 	stats := &SyncStats{}
@@ -41,7 +44,7 @@ func Sync(
 		return stats, fmt.Errorf("parse github url: %w", err)
 	}
 
-	tree, err := gh.ListTree(ctx, owner, repoName, ref)
+	tree, err := ghClient.ListTree(ctx, owner, repoName, ref)
 	if err != nil {
 		return stats, fmt.Errorf("list tree: %w", err)
 	}
@@ -65,11 +68,12 @@ func Sync(
 		contentID := match[1]
 		seen[contentID] = struct{}{}
 
-		if existingSHA, ok := current[contentID]; ok && existingSHA == e.SHA {
+		existing, exists := current[contentID]
+		if exists && existing.sha == e.SHA {
 			continue // unchanged
 		}
 
-		raw, err := gh.FetchRaw(ctx, owner, repoName, ref, e.Path)
+		raw, err := ghClient.FetchRaw(ctx, owner, repoName, ref, e.Path)
 		if err != nil {
 			logger.Error("fetch raw", "file", e.Path, "err", err)
 			stats.Errors++
@@ -93,6 +97,12 @@ func Sync(
 			stats.Inserted++
 		} else {
 			stats.Updated++
+			if app != nil && existing.discussionNodeID != "" {
+				title := fmt.Sprintf("[매일함] %s", parsed.Frontmatter.Title)
+				if err := app.UpdateDiscussionTitle(ctx, existing.discussionNodeID, title); err != nil {
+					logger.Warn("discussion title update failed (non-fatal)", "content", contentID, "err", err)
+				}
+			}
 		}
 	}
 
@@ -115,23 +125,29 @@ func Sync(
 	return stats, nil
 }
 
-func loadCurrent(ctx context.Context, db *sql.DB, repoSlug string) (map[string]string, error) {
+type currentEntry struct {
+	sha              string
+	discussionNodeID string
+}
+
+func loadCurrent(ctx context.Context, db *sql.DB, repoSlug string) (map[string]currentEntry, error) {
 	rows, err := db.QueryContext(ctx,
-		`SELECT content_id, COALESCE(github_sha, '') FROM contents
-		 WHERE repo_slug = ? AND deleted_at IS NULL`,
+		`SELECT content_id, COALESCE(github_sha, ''), COALESCE(discussion_node_id, '')
+		 FROM contents WHERE repo_slug = ? AND deleted_at IS NULL`,
 		repoSlug,
 	)
 	if err != nil {
 		return nil, err
 	}
 	defer closeutil.Discard(rows)
-	m := map[string]string{}
+	m := map[string]currentEntry{}
 	for rows.Next() {
-		var id, sha string
-		if err := rows.Scan(&id, &sha); err != nil {
+		var id string
+		var e currentEntry
+		if err := rows.Scan(&id, &e.sha, &e.discussionNodeID); err != nil {
 			return nil, err
 		}
-		m[id] = sha
+		m[id] = e
 	}
 	return m, rows.Err()
 }

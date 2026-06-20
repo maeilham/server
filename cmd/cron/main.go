@@ -186,11 +186,21 @@ func runSync(ctx context.Context, logger *slog.Logger, conn *sql.DB, cfg *config
 		return nil
 	}
 
-	gh := content.NewGitHubClient(cfg.GitHubToken)
+	ghClient := content.NewGitHubClient(cfg.GitHubToken)
+
+	var ghApp *gh.App
+	if cfg.GitHubAppID != 0 && cfg.GitHubAppPemPath != "" && cfg.GitHubInstallationID != 0 {
+		if app, appErr := gh.NewApp(cfg.GitHubAppID, cfg.GitHubInstallationID, cfg.GitHubAppPemPath); appErr != nil {
+			logger.Warn("github app init failed (discussion 업데이트 비활성화)", "err", appErr)
+		} else {
+			ghApp = app
+		}
+	}
+
 	for _, r := range rows {
 		logger := logger.With("repo", r.slug)
 		logger.Info("sync starting", "url", r.url)
-		stats, err := content.Sync(ctx, logger, conn, gh, r.slug, r.url, "")
+		stats, err := content.Sync(ctx, logger, conn, ghClient, ghApp, r.slug, r.url, "")
 		if err != nil {
 			logger.Error("sync", "err", err)
 			continue

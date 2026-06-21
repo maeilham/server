@@ -52,6 +52,9 @@ func runREPL(rw io.ReadWriter, deps Deps) {
 	for {
 		fmt.Fprint(rw, "\x1b[32m>\x1b[0m ")
 		line := readLine(rw, history)
+		if line == "\x04" {
+			return // 연결 종료
+		}
 		if line == "\x03" {
 			fmt.Fprint(rw, "\r\n")
 			return
@@ -290,8 +293,11 @@ func readLine(rw io.ReadWriter, history []string) string {
 	saved := ""
 	for {
 		n, err := rw.Read(b)
-		if err != nil || n == 0 {
-			return string(buf)
+		if err != nil {
+			return "\x04" // 연결 종료
+		}
+		if n == 0 {
+			continue
 		}
 		ch := b[0]
 		if ch == '\r' || ch == '\n' {

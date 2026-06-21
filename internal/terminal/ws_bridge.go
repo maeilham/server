@@ -95,5 +95,6 @@ func WSBridge(logger *slog.Logger, sshAddr string) http.HandlerFunc {
 		}()
 
 		<-done
+		stdin.Close() // SSH_MSG_CHANNEL_EOF → 서버 ch.Read() 언블록
 	}
 }

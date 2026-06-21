@@ -3,6 +3,7 @@ package http
 import (
 	"log/slog"
 	"net/http"
+	_ "net/http/pprof"
 
 	"github.com/go-chi/chi/v5"
 	chimw "github.com/go-chi/chi/v5/middleware"
@@ -51,6 +52,8 @@ func NewRouter(deps Deps) http.Handler {
 		sshAddr = "localhost:2222"
 	}
 	r.Get("/ws/terminal", terminal.WSBridge(deps.Logger, sshAddr))
+
+	r.Mount("/debug", chimw.Profiler())
 
 	return r
 }

@@ -48,9 +48,10 @@ func NewHandler(deps Deps) SessionHandler {
 
 func runREPL(rw io.ReadWriter, deps Deps) {
 	printBanner(rw)
+	var history []string
 	for {
 		fmt.Fprint(rw, "\x1b[32m>\x1b[0m ")
-		line := readLine(rw)
+		line := readLine(rw, history)
 		if line == "\x03" {
 			fmt.Fprint(rw, "\r\n")
 			return
@@ -64,6 +65,7 @@ func runREPL(rw io.ReadWriter, deps Deps) {
 		if line == "" {
 			continue
 		}
+		history = append(history, line)
 
 		parts := strings.Fields(line)
 		switch parts[0] {
@@ -159,7 +161,7 @@ func cmdSubscribe(rw io.ReadWriter, deps Deps, parts []string) {
 		email = strings.TrimSpace(strings.ToLower(parts[1]))
 	} else {
 		fmt.Fprint(rw, "이메일을 입력하세요: ")
-		email = strings.TrimSpace(strings.ToLower(readLine(rw)))
+		email = strings.TrimSpace(strings.ToLower(readLine(rw, nil)))
 		fmt.Fprint(rw, "\r\n")
 	}
 	if email == "" {
@@ -260,7 +262,7 @@ func handleConfirmed(rw io.ReadWriter) {
 
 func handleUnsubscribe(rw io.ReadWriter, deps Deps, token string) {
 	fmt.Fprint(rw, "\r\n구독을 취소하시겠어요? (y/n): ")
-	line := readLine(rw)
+	line := readLine(rw, nil)
 	fmt.Fprintf(rw, "\r\n")
 	if strings.TrimSpace(strings.ToLower(line)) != "y" {
 		fmt.Fprint(rw, "취소하지 않았습니다.\r\n\r\n")
@@ -273,9 +275,19 @@ func handleUnsubscribe(rw io.ReadWriter, deps Deps, token string) {
 	fmt.Fprint(rw, "\x1b[32m✓\x1b[0m 구독이 취소됐습니다.\r\n\r\n")
 }
 
-func readLine(rw io.ReadWriter) string {
+func replaceLineBuf(rw io.ReadWriter, buf *[]byte, line string) {
+	for range *buf {
+		fmt.Fprint(rw, "\b \b")
+	}
+	fmt.Fprint(rw, line)
+	*buf = []byte(line)
+}
+
+func readLine(rw io.ReadWriter, history []string) string {
 	var buf []byte
 	b := make([]byte, 1)
+	histIdx := len(history)
+	saved := ""
 	for {
 		n, err := rw.Read(b)
 		if err != nil || n == 0 {
@@ -287,10 +299,36 @@ func readLine(rw io.ReadWriter) string {
 		}
 		if ch == 3 { // Ctrl+C
 			if len(buf) == 0 {
-				return "\x03" // 빈 입력 → 종료
+				return "\x03"
 			}
 			fmt.Fprint(rw, "^C\r\n")
-			return "\x03\x03" // 입력 있음 → 라인 초기화
+			return "\x03\x03"
+		}
+		if ch == '\x1b' { // 이스케이프 시퀀스
+			seq := make([]byte, 2)
+			rw.Read(seq)
+			if seq[0] == '[' {
+				switch seq[1] {
+				case 'A': // Up
+					if histIdx > 0 {
+						if histIdx == len(history) {
+							saved = string(buf)
+						}
+						histIdx--
+						replaceLineBuf(rw, &buf, history[histIdx])
+					}
+				case 'B': // Down
+					if histIdx < len(history) {
+						histIdx++
+						line := saved
+						if histIdx < len(history) {
+							line = history[histIdx]
+						}
+						replaceLineBuf(rw, &buf, line)
+					}
+				}
+			}
+			continue
 		}
 		if ch == 127 || ch == 8 {
 			if len(buf) > 0 {

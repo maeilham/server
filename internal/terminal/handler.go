@@ -50,7 +50,15 @@ func runREPL(rw io.ReadWriter, deps Deps) {
 	printBanner(rw)
 	for {
 		fmt.Fprint(rw, "\x1b[32m>\x1b[0m ")
-		line := strings.TrimSpace(readLine(rw))
+		line := readLine(rw)
+		if line == "\x03" {
+			fmt.Fprint(rw, "\r\n")
+			return
+		}
+		if line == "\x03\x03" {
+			continue
+		}
+		line = strings.TrimSpace(line)
 		fmt.Fprint(rw, "\r\n")
 
 		if line == "" {
@@ -209,7 +217,15 @@ func cmdShow(rw io.ReadWriter, deps Deps, parts []string) {
 		}
 	}
 
-	rendered, err := glamour.Render(raw.String(), "dark")
+	renderer, err := glamour.NewTermRenderer(
+		glamour.WithStylePath("dark"),
+		glamour.WithWordWrap(0),
+	)
+	if err != nil {
+		renderContent(rw, c)
+		return
+	}
+	rendered, err := renderer.Render(raw.String())
 	if err != nil {
 		renderContent(rw, c)
 		return
@@ -268,6 +284,13 @@ func readLine(rw io.ReadWriter) string {
 		ch := b[0]
 		if ch == '\r' || ch == '\n' {
 			return string(buf)
+		}
+		if ch == 3 { // Ctrl+C
+			if len(buf) == 0 {
+				return "\x03" // 빈 입력 → 종료
+			}
+			fmt.Fprint(rw, "^C\r\n")
+			return "\x03\x03" // 입력 있음 → 라인 초기화
 		}
 		if ch == 127 || ch == 8 {
 			if len(buf) > 0 {

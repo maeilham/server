@@ -1,19 +1,15 @@
 package http
 
 import (
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"net/mail"
-	"strconv"
 	"strings"
-	"time"
 
 	imail "github.com/maeilham/server/internal/mail"
+	"github.com/maeilham/server/internal/pkg/token"
 	"github.com/maeilham/server/internal/subscriber"
 )
 
@@ -52,8 +48,8 @@ func (h *subscribeHandler) handleSubscribe(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	token := makeToken(req.Email, h.secret)
-	confirmURL := fmt.Sprintf("%s/api/confirm?token=%s", h.apiURL, token)
+	tok := token.Make(req.Email, h.secret)
+	confirmURL := fmt.Sprintf("%s/api/confirm?token=%s", h.apiURL, tok)
 
 	subject, text, html := imail.RenderConfirm(confirmURL)
 	msg := imail.Message{
@@ -72,10 +68,10 @@ func (h *subscribeHandler) handleSubscribe(w http.ResponseWriter, r *http.Reques
 }
 
 func (h *subscribeHandler) handleConfirm(w http.ResponseWriter, r *http.Request) {
-	token := r.URL.Query().Get("token")
-	email, err := verifyToken(token, h.secret)
+	tok := r.URL.Query().Get("token")
+	email, err := token.Verify(tok, h.secret)
 	if err != nil {
-		h.logger.Warn("confirm: token verification failed", "err", err, "token_prefix", truncate(token, 16))
+		h.logger.Warn("confirm: token verification failed", "err", err, "token_prefix", truncate(tok, 16))
 		http.Redirect(w, r, h.baseURL+"/?status=invalid", http.StatusSeeOther)
 		return
 	}
@@ -98,8 +94,8 @@ func truncate(s string, n int) string {
 }
 
 func (h *subscribeHandler) handleUnsubscribe(w http.ResponseWriter, r *http.Request) {
-	token := r.URL.Query().Get("token")
-	email, err := verifyToken(token, h.secret)
+	tok := r.URL.Query().Get("token")
+	email, err := token.Verify(tok, h.secret)
 	if err != nil {
 		jsonError(w, "링크가 유효하지 않습니다", http.StatusBadRequest)
 		return
@@ -111,58 +107,6 @@ func (h *subscribeHandler) handleUnsubscribe(w http.ResponseWriter, r *http.Requ
 	}
 
 	jsonOK(w, map[string]string{"status": "ok"})
-}
-
-// ── Token helpers ────────────────────────────────────────────────────────────
-
-func VerifyToken(token, secret string) (string, error) {
-	return verifyToken(token, secret)
-}
-
-func MakeToken(email, secret string) string {
-	return makeToken(email, secret)
-}
-
-func makeToken(email, secret string) string {
-	exp := time.Now().Add(48 * time.Hour).Unix()
-	msg := fmt.Sprintf("%s:%d", email, exp)
-	mac := hmac.New(sha256.New, []byte(secret))
-	mac.Write([]byte(msg))
-	sig := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
-	payload := base64.RawURLEncoding.EncodeToString([]byte(msg))
-	return payload + "." + sig
-}
-
-func verifyToken(token, secret string) (string, error) {
-	parts := strings.SplitN(token, ".", 2)
-	if len(parts) != 2 {
-		return "", fmt.Errorf("invalid token")
-	}
-	msgBytes, err := base64.RawURLEncoding.DecodeString(parts[0])
-	if err != nil {
-		return "", fmt.Errorf("invalid token")
-	}
-	msg := string(msgBytes)
-
-	mac := hmac.New(sha256.New, []byte(secret))
-	mac.Write([]byte(msg))
-	expected := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
-	if !hmac.Equal([]byte(parts[1]), []byte(expected)) {
-		return "", fmt.Errorf("invalid signature")
-	}
-
-	idx := strings.LastIndex(msg, ":")
-	if idx < 0 {
-		return "", fmt.Errorf("invalid token format")
-	}
-	exp, err := strconv.ParseInt(msg[idx+1:], 10, 64)
-	if err != nil {
-		return "", fmt.Errorf("invalid token expiry")
-	}
-	if time.Now().Unix() > exp {
-		return "", fmt.Errorf("token expired")
-	}
-	return msg[:idx], nil
 }
 
 // ── Response helpers ─────────────────────────────────────────────────────────

@@ -20,33 +20,24 @@ type ContentItem struct {
 	DiscussionURL string
 }
 
-type Deps struct {
-	Subscribe        func(ctx context.Context, email string) error
-	Unsubscribe      func(ctx context.Context, token string) error
-	TodayContent     func(ctx context.Context) (*ContentItem, error)
-	ListContents     func(ctx context.Context, limit int) ([]*ContentItem, error)
-	GetContent       func(ctx context.Context, contentID string) (*ContentItem, error)
-	EnsureDiscussion func(ctx context.Context, contentID string) (string, error)
-}
-
-func NewHandler(deps Deps) SessionHandler {
+func NewHandler(svc Service) SessionHandler {
 	return func(rw io.ReadWriter, env map[string]string) {
 		action := env["MAEILHAM_ACTION"]
 		token := env["MAEILHAM_TOKEN"]
 		status := env["MAEILHAM_STATUS"]
 
 		if action == "unsubscribe" && token != "" {
-			handleUnsubscribe(rw, deps, token)
+			handleUnsubscribe(rw, svc, token)
 			return
 		}
 		if status == "confirmed" {
 			handleConfirmed(rw)
 		}
-		runREPL(rw, deps)
+		runREPL(rw, svc)
 	}
 }
 
-func runREPL(rw io.ReadWriter, deps Deps) {
+func runREPL(rw io.ReadWriter, svc Service) {
 	printBanner(rw)
 	var history []string
 	for {
@@ -75,13 +66,13 @@ func runREPL(rw io.ReadWriter, deps Deps) {
 		case "help", "?":
 			printHelp(rw)
 		case "today":
-			cmdToday(rw, deps)
+			cmdToday(rw, svc)
 		case "list":
-			cmdList(rw, deps)
+			cmdList(rw, svc)
 		case "show":
-			cmdShow(rw, deps, parts)
+			cmdShow(rw, svc, parts)
 		case "subscribe":
-			cmdSubscribe(rw, deps, parts)
+			cmdSubscribe(rw, svc, parts)
 		case "exit", "quit", "q":
 			fmt.Fprint(rw, "bye!\r\n\r\n")
 			return
@@ -111,12 +102,8 @@ func printHelp(rw io.ReadWriter) {
 	)
 }
 
-func cmdToday(rw io.ReadWriter, deps Deps) {
-	if deps.TodayContent == nil {
-		fmt.Fprint(rw, "\x1b[31m콘텐츠 조회 기능이 설정되지 않았습니다.\x1b[0m\r\n\r\n")
-		return
-	}
-	c, err := deps.TodayContent(context.Background())
+func cmdToday(rw io.ReadWriter, svc Service) {
+	c, err := svc.TodayContent(context.Background())
 	if err != nil {
 		fmt.Fprintf(rw, "\x1b[31m오류: %s\x1b[0m\r\n\r\n", err)
 		return
@@ -125,20 +112,16 @@ func cmdToday(rw io.ReadWriter, deps Deps) {
 		fmt.Fprint(rw, "\x1b[2m아직 등록된 질문이 없습니다.\x1b[0m\r\n\r\n")
 		return
 	}
-	if c.DiscussionURL == "" && deps.EnsureDiscussion != nil {
-		if url, err := deps.EnsureDiscussion(context.Background(), c.ContentID); err == nil {
+	if c.DiscussionURL == "" {
+		if url, err := svc.EnsureDiscussion(context.Background(), c.ContentID); err == nil {
 			c.DiscussionURL = url
 		}
 	}
 	renderContent(rw, c)
 }
 
-func cmdList(rw io.ReadWriter, deps Deps) {
-	if deps.ListContents == nil {
-		fmt.Fprint(rw, "\x1b[31m콘텐츠 조회 기능이 설정되지 않았습니다.\x1b[0m\r\n\r\n")
-		return
-	}
-	items, err := deps.ListContents(context.Background(), 10)
+func cmdList(rw io.ReadWriter, svc Service) {
+	items, err := svc.ListContents(context.Background(), 10)
 	if err != nil {
 		fmt.Fprintf(rw, "\x1b[31m오류: %s\x1b[0m\r\n\r\n", err)
 		return
@@ -158,7 +141,7 @@ func cmdList(rw io.ReadWriter, deps Deps) {
 	fmt.Fprint(rw, "\r\n")
 }
 
-func cmdSubscribe(rw io.ReadWriter, deps Deps, parts []string) {
+func cmdSubscribe(rw io.ReadWriter, svc Service, parts []string) {
 	var email string
 	if len(parts) >= 2 {
 		email = strings.TrimSpace(strings.ToLower(parts[1]))
@@ -170,23 +153,19 @@ func cmdSubscribe(rw io.ReadWriter, deps Deps, parts []string) {
 	if email == "" {
 		return
 	}
-	if err := deps.Subscribe(context.Background(), email); err != nil {
+	if err := svc.Subscribe(context.Background(), email); err != nil {
 		fmt.Fprintf(rw, "\x1b[31m오류: %s\x1b[0m\r\n\r\n", err)
 		return
 	}
 	fmt.Fprint(rw, "\x1b[32m✓\x1b[0m 확인 메일을 보냈습니다. 메일함을 확인해주세요.\r\n\r\n")
 }
 
-func cmdShow(rw io.ReadWriter, deps Deps, parts []string) {
+func cmdShow(rw io.ReadWriter, svc Service, parts []string) {
 	if len(parts) < 2 {
 		fmt.Fprint(rw, "사용법: show <id>  (예: show 0001)\r\n\r\n")
 		return
 	}
-	if deps.GetContent == nil {
-		fmt.Fprint(rw, "\x1b[31m콘텐츠 조회 기능이 설정되지 않았습니다.\x1b[0m\r\n\r\n")
-		return
-	}
-	c, err := deps.GetContent(context.Background(), parts[1])
+	c, err := svc.GetContent(context.Background(), parts[1])
 	if err != nil {
 		fmt.Fprintf(rw, "\x1b[31m오류: %s\x1b[0m\r\n\r\n", err)
 		return
@@ -263,7 +242,7 @@ func handleConfirmed(rw io.ReadWriter) {
 	)
 }
 
-func handleUnsubscribe(rw io.ReadWriter, deps Deps, token string) {
+func handleUnsubscribe(rw io.ReadWriter, svc Service, token string) {
 	fmt.Fprint(rw, "\r\n구독을 취소하시겠어요? (y/n): ")
 	line := readLine(rw, nil)
 	fmt.Fprintf(rw, "\r\n")
@@ -271,7 +250,7 @@ func handleUnsubscribe(rw io.ReadWriter, deps Deps, token string) {
 		fmt.Fprint(rw, "취소하지 않았습니다.\r\n\r\n")
 		return
 	}
-	if err := deps.Unsubscribe(context.Background(), token); err != nil {
+	if err := svc.Unsubscribe(context.Background(), token); err != nil {
 		fmt.Fprintf(rw, "\x1b[31m오류: %s\x1b[0m\r\n", err)
 		return
 	}

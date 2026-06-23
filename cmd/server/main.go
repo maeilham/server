@@ -6,12 +6,10 @@ import (
 	stdhttp "net/http"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 	"time"
 
 	"github.com/maeilham/server/internal/db"
-	"github.com/maeilham/server/internal/delivery"
 	gh "github.com/maeilham/server/internal/github"
 	httpsrv "github.com/maeilham/server/internal/http"
 	"github.com/maeilham/server/internal/mail"
@@ -52,87 +50,8 @@ func main() {
 		}
 	}
 
-	termHandler := terminal.NewHandler(terminal.Deps{
-		Subscribe: func(ctx context.Context, email string) error {
-			email = strings.TrimSpace(strings.ToLower(email))
-			if err := store.Reactivate(ctx, email); err != nil {
-				return err
-			}
-			if _, err := store.Upsert(ctx, email); err != nil {
-				return err
-			}
-			token := httpsrv.MakeToken(email, cfg.Secret)
-			confirmURL := cfg.APIURL + "/api/confirm?token=" + token
-			subject, text, html := mail.RenderConfirm(confirmURL)
-			return mailer.Send(ctx, mail.Message{
-				To:       email,
-				Subject:  subject,
-				TextBody: text,
-				HTMLBody:  html,
-			})
-		},
-		Unsubscribe: func(ctx context.Context, token string) error {
-			email, err := httpsrv.VerifyToken(token, cfg.Secret)
-			if err != nil {
-				return err
-			}
-			return store.Unsubscribe(ctx, email)
-		},
-		TodayContent: func(ctx context.Context) (*terminal.ContentItem, error) {
-			c, err := delivery.TodayContent(ctx, conn)
-			if err != nil || c == nil {
-				return nil, err
-			}
-			item := &terminal.ContentItem{
-				ContentID: c.ContentID,
-				Title:     c.Title,
-				Preview:   c.Preview,
-				GitHubURL: c.GitHubURL,
-				BodyPath:  c.BodyPath,
-			}
-			if c.DiscussionURL.Valid {
-				item.DiscussionURL = c.DiscussionURL.String
-			}
-			return item, nil
-		},
-		EnsureDiscussion: func(ctx context.Context, contentID string) (string, error) {
-			url, err := delivery.EnsureDiscussion(ctx, ghApp, conn, contentID)
-			if err != nil {
-				log.Warn("discussion 생성 실패", "content_id", contentID, "err", err)
-			}
-			return url, err
-		},
-		ListContents: func(ctx context.Context, limit int) ([]*terminal.ContentItem, error) {
-			items, err := delivery.ListContents(ctx, conn, limit)
-			if err != nil {
-				return nil, err
-			}
-			out := make([]*terminal.ContentItem, len(items))
-			for i, c := range items {
-				out[i] = &terminal.ContentItem{
-					ContentID: c.ContentID,
-					Title:     c.Title,
-					Preview:   c.Preview,
-					GitHubURL: c.GitHubURL,
-					BodyPath:  c.BodyPath,
-				}
-			}
-			return out, nil
-		},
-		GetContent: func(ctx context.Context, contentID string) (*terminal.ContentItem, error) {
-			c, err := delivery.GetContent(ctx, conn, contentID)
-			if err != nil || c == nil {
-				return nil, err
-			}
-			return &terminal.ContentItem{
-				ContentID: c.ContentID,
-				Title:     c.Title,
-				Preview:   c.Preview,
-				GitHubURL: c.GitHubURL,
-				BodyPath:  c.BodyPath,
-			}, nil
-		},
-	})
+	termSvc := terminal.NewService(conn, store, mailer, ghApp, cfg.Secret, cfg.APIURL)
+	termHandler := terminal.NewHandler(termSvc)
 
 	// SSH 서버 시작
 	sshSrv, err := terminal.NewServer(log, termHandler)

@@ -34,6 +34,10 @@ func applyStyle(s string) string {
 	return s
 }
 
+func sprint(s string) string {
+	return applyStyle(strings.ReplaceAll(s, "\n", "\r\n"))
+}
+
 type ContentItem struct {
 	ContentID     string
 	Title         string
@@ -66,7 +70,7 @@ func runREPL(rw io.ReadWriter, svc Service) {
 	cmdToday(rw, svc)
 	var history []string
 	for {
-		fmt.Fprint(rw, "\x1b[32m>\x1b[0m ")
+		fmt.Fprint(rw, sprint("§green>§r "))
 		line := readLine(rw, history)
 		if line == "\x04" {
 			return // 연결 종료
@@ -102,7 +106,7 @@ func runREPL(rw io.ReadWriter, svc Service) {
 			fmt.Fprint(rw, "bye!\r\n\r\n")
 			return
 		default:
-			fmt.Fprintf(rw, "\x1b[31m알 수 없는 명령어: %s\x1b[0m  help를 입력해보세요.\r\n\r\n", parts[0])
+			fmt.Fprint(rw, sprint(fmt.Sprintf("§red알 수 없는 명령어: %s§r  help를 입력해보세요.\n\n", parts[0])))
 		}
 	}
 }
@@ -113,24 +117,24 @@ func printBanner(rw io.ReadWriter) {
 }
 
 func printHelp(rw io.ReadWriter) {
-	fmt.Fprint(rw,
-		"\r\n"+
-			"  \x1b[1mtoday\x1b[0m            오늘의 질문\r\n"+
-			"  \x1b[1mlist\x1b[0m             최근 질문 목록\r\n"+
-			"  \x1b[1mshow <id>\x1b[0m        질문 본문 보기\r\n"+
-			"  \x1b[1msubscribe\x1b[0m        이메일 구독\r\n"+
-			"  \x1b[1mexit\x1b[0m             종료\r\n\r\n",
-	)
+	fmt.Fprint(rw, sprint(
+		"\n"+
+			"  §boldtoday§r            오늘의 질문\n"+
+			"  §boldlist§r             최근 질문 목록\n"+
+			"  §boldshow <id>§r        질문 본문 보기\n"+
+			"  §boldsubscribe§r        이메일 구독\n"+
+			"  §boldexit§r             종료\n\n",
+	))
 }
 
 func cmdToday(rw io.ReadWriter, svc Service) {
 	c, err := svc.TodayContent(context.Background())
 	if err != nil {
-		fmt.Fprintf(rw, "\x1b[31m오류: %s\x1b[0m\r\n\r\n", err)
+		fmt.Fprint(rw, sprint(fmt.Sprintf("§red오류: %s§r\n\n", err)))
 		return
 	}
 	if c == nil {
-		fmt.Fprint(rw, "\x1b[2m아직 등록된 질문이 없습니다.\x1b[0m\r\n\r\n")
+		fmt.Fprint(rw, sprint("§dim아직 등록된 질문이 없습니다.§r\n\n"))
 		return
 	}
 	if c.DiscussionURL == "" {
@@ -144,20 +148,20 @@ func cmdToday(rw io.ReadWriter, svc Service) {
 func cmdList(rw io.ReadWriter, svc Service) {
 	items, err := svc.ListContents(context.Background(), 10)
 	if err != nil {
-		fmt.Fprintf(rw, "\x1b[31m오류: %s\x1b[0m\r\n\r\n", err)
+		fmt.Fprint(rw, sprint(fmt.Sprintf("§red오류: %s§r\n\n", err)))
 		return
 	}
 	if len(items) == 0 {
-		fmt.Fprint(rw, "\x1b[2m아직 등록된 질문이 없습니다.\x1b[0m\r\n\r\n")
+		fmt.Fprint(rw, sprint("§dim아직 등록된 질문이 없습니다.§r\n\n"))
 		return
 	}
 	fmt.Fprint(rw, "\r\n")
 	for _, c := range items {
 		tags := ""
 		if len(c.Tags) > 0 {
-			tags = "  \x1b[2m[" + strings.Join(c.Tags, ", ") + "]\x1b[0m"
+			tags = sprint("  §dim["+strings.Join(c.Tags, ", ")+"]§r")
 		}
-		fmt.Fprintf(rw, "  \x1b[1m%s\x1b[0m  %s%s\r\n", c.ContentID, c.Title, tags)
+		fmt.Fprint(rw, sprint(fmt.Sprintf("  §bold%s§r  %s%s\n", c.ContentID, c.Title, tags)))
 	}
 	fmt.Fprint(rw, "\r\n")
 }
@@ -175,10 +179,10 @@ func cmdSubscribe(rw io.ReadWriter, svc Service, parts []string) {
 		return
 	}
 	if err := svc.Subscribe(context.Background(), email); err != nil {
-		fmt.Fprintf(rw, "\x1b[31m오류: %s\x1b[0m\r\n\r\n", err)
+		fmt.Fprint(rw, sprint(fmt.Sprintf("§red오류: %s§r\n\n", err)))
 		return
 	}
-	fmt.Fprint(rw, "\x1b[32m✓\x1b[0m 확인 메일을 보냈습니다. 메일함을 확인해주세요.\r\n\r\n")
+	fmt.Fprint(rw, sprint("§green✓§r 확인 메일을 보냈습니다. 메일함을 확인해주세요.\n\n"))
 }
 
 func cmdShow(rw io.ReadWriter, svc Service, parts []string) {
@@ -188,11 +192,11 @@ func cmdShow(rw io.ReadWriter, svc Service, parts []string) {
 	}
 	c, err := svc.GetContent(context.Background(), parts[1])
 	if err != nil {
-		fmt.Fprintf(rw, "\x1b[31m오류: %s\x1b[0m\r\n\r\n", err)
+		fmt.Fprint(rw, sprint(fmt.Sprintf("§red오류: %s§r\n\n", err)))
 		return
 	}
 	if c == nil {
-		fmt.Fprintf(rw, "\x1b[31m%s 를 찾을 수 없습니다.\x1b[0m\r\n\r\n", parts[1])
+		fmt.Fprint(rw, sprint(fmt.Sprintf("§red%s 를 찾을 수 없습니다.§r\n\n", parts[1])))
 		return
 	}
 	if c.GitHubURL == "" || c.BodyPath == "" {
@@ -243,24 +247,24 @@ func cmdShow(rw io.ReadWriter, svc Service, parts []string) {
 func renderContent(rw io.ReadWriter, c *ContentItem) {
 	fmt.Fprint(rw, "\r\n")
 	if len(c.Tags) > 0 {
-		fmt.Fprintf(rw, "  \x1b[2m[%s]\x1b[0m\r\n", strings.Join(c.Tags, ", "))
+		fmt.Fprint(rw, sprint(fmt.Sprintf("  §dim[%s]§r\n", strings.Join(c.Tags, ", "))))
 	}
-	fmt.Fprintf(rw, "  \x1b[1m%s\x1b[0m\r\n\r\n", c.Title)
+	fmt.Fprint(rw, sprint(fmt.Sprintf("  §bold%s§r\n\n", c.Title)))
 	for _, line := range strings.Split(c.Preview, "\n") {
 		fmt.Fprintf(rw, "  %s\r\n", line)
 	}
 	if c.DiscussionURL != "" {
-		fmt.Fprintf(rw, "\r\n  \x1b[2m→ %s\x1b[0m\r\n", c.DiscussionURL)
+		fmt.Fprint(rw, sprint(fmt.Sprintf("\n  §dim→ %s§r\n", c.DiscussionURL)))
 	}
 	fmt.Fprint(rw, "\r\n")
 }
 
 func handleConfirmed(rw io.ReadWriter) {
-	fmt.Fprint(rw,
-		"\r\n"+
-			"\x1b[32m✓ 구독이 완료됐습니다!\x1b[0m\r\n\r\n"+
-			"\x1b[2m  내일부터 매일 아침 질문이 도착합니다.\x1b[0m\r\n\r\n",
-	)
+	fmt.Fprint(rw, sprint(
+		"\n"+
+			"§green✓ 구독이 완료됐습니다!§r\n\n"+
+			"§dim  내일부터 매일 아침 질문이 도착합니다.§r\n\n",
+	))
 }
 
 func handleUnsubscribe(rw io.ReadWriter, svc Service, token string) {
@@ -272,10 +276,10 @@ func handleUnsubscribe(rw io.ReadWriter, svc Service, token string) {
 		return
 	}
 	if err := svc.Unsubscribe(context.Background(), token); err != nil {
-		fmt.Fprintf(rw, "\x1b[31m오류: %s\x1b[0m\r\n", err)
+		fmt.Fprint(rw, sprint(fmt.Sprintf("§red오류: %s§r\n", err)))
 		return
 	}
-	fmt.Fprint(rw, "\x1b[32m✓\x1b[0m 구독이 취소됐습니다.\r\n\r\n")
+	fmt.Fprint(rw, sprint("§green✓§r 구독이 취소됐습니다.\n\n"))
 }
 
 func replaceLineBuf(rw io.ReadWriter, buf *[]byte, line string) {

@@ -2,6 +2,7 @@ package terminal
 
 import (
 	"context"
+	_ "embed"
 	"fmt"
 	"io"
 	"net/http"
@@ -9,6 +10,29 @@ import (
 
 	"github.com/charmbracelet/glamour"
 )
+
+//go:embed banner.txt
+var bannerRaw string
+
+var styleMap = map[string]string{
+	"§r":        "\x1b[0m",
+	"§bold":     "\x1b[1m",
+	"§dim":      "\x1b[2m",
+	"§red":      "\x1b[31m",
+	"§green":    "\x1b[32m",
+	"§yellow":   "\x1b[33m",
+	"§blue":     "\x1b[34m",
+	"§gray":     "\x1b[90m",
+	"§bg-green": "\x1b[42m",
+	"§bg-red":   "\x1b[41m",
+}
+
+func applyStyle(s string) string {
+	for token, code := range styleMap {
+		s = strings.ReplaceAll(s, token, code)
+	}
+	return s
+}
 
 type ContentItem struct {
 	ContentID     string
@@ -39,6 +63,7 @@ func NewHandler(svc Service) SessionHandler {
 
 func runREPL(rw io.ReadWriter, svc Service) {
 	printBanner(rw)
+	cmdToday(rw, svc)
 	var history []string
 	for {
 		fmt.Fprint(rw, "\x1b[32m>\x1b[0m ")
@@ -83,12 +108,8 @@ func runREPL(rw io.ReadWriter, svc Service) {
 }
 
 func printBanner(rw io.ReadWriter) {
-	fmt.Fprint(rw,
-		"\r\n"+
-			"\x1b[32m  매일함\x1b[0m\r\n"+
-			"\x1b[2m  매일 아침, 질문 하나가 도착합니다.\x1b[0m\r\n\r\n"+
-			"  \x1b[2mhelp\x1b[0m을 입력하면 사용할 수 있는 명령어를 볼 수 있어요.\r\n\r\n",
-	)
+	out := strings.ReplaceAll(bannerRaw, "\n", "\r\n")
+	fmt.Fprint(rw, applyStyle(out))
 }
 
 func printHelp(rw io.ReadWriter) {

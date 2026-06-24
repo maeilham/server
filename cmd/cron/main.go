@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
@@ -10,7 +11,9 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"os/exec"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -58,6 +61,11 @@ func main() {
 	case "sync":
 		if err := runSync(ctx, logger, conn, cfg, args); err != nil {
 			logger.Error("sync failed", "err", err)
+			os.Exit(1)
+		}
+	case "summarize":
+		if err := runSummarize(ctx, logger, conn, cfg, args); err != nil {
+			logger.Error("summarize failed", "err", err)
 			os.Exit(1)
 		}
 	case "send-test":
@@ -371,9 +379,151 @@ commands:
   repo deactivate --slug <slug>
                                레포 비활성화
   sync [--repo <slug>]         콘텐츠 repo를 fetch + DB로 sync
+  summarize --repo <slug> --content-id <id>
+                               Discussion 댓글을 AI로 요약해 본문 업데이트
   send-test --to <email>       발송 어댑터 동작 확인용 메일 1통 전송
   send-daily [--dry-run] [--date YYYY-MM-DD]
                                활성 구독자 전체에 오늘의 메일 발송
   gen-link --email <email> [--type unsubscribe|confirm]
                                테스트용 링크 생성`)
+}
+
+func runSummarize(ctx context.Context, logger *slog.Logger, conn *sql.DB, cfg *config.Config, args []string) error {
+	fs := flag.NewFlagSet("summarize", flag.ExitOnError)
+	repoSlug := fs.String("repo", "", "레포 슬러그")
+	contentID := fs.String("content-id", "", "콘텐츠 ID")
+	aiCmd := fs.String("ai-cmd", "claude --print", "AI CLI 커맨드 (stdin으로 프롬프트 주입, stdout으로 결과 수신)")
+	yes := fs.Bool("yes", false, "확인 없이 바로 업데이트")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *repoSlug == "" || *contentID == "" {
+		return fmt.Errorf("--repo 와 --content-id 는 필수입니다")
+	}
+
+	// 1. DB에서 github_url, discussion_url, body_path 조회
+	var githubURL, bodyPath string
+	var discussionURL sql.NullString
+	err := conn.QueryRowContext(ctx, `
+		SELECT r.github_url, c.discussion_url, c.body_path
+		  FROM contents c
+		  JOIN repos r ON r.slug = c.repo_slug
+		 WHERE c.repo_slug = ? AND c.content_id = ? AND c.deleted_at IS NULL`,
+		*repoSlug, *contentID,
+	).Scan(&githubURL, &discussionURL, &bodyPath)
+	if err == sql.ErrNoRows {
+		return fmt.Errorf("콘텐츠를 찾을 수 없습니다: %s/%s", *repoSlug, *contentID)
+	}
+	if err != nil {
+		return fmt.Errorf("query content: %w", err)
+	}
+	if !discussionURL.Valid || discussionURL.String == "" {
+		return fmt.Errorf("discussion URL이 없습니다 (content_id: %s)", *contentID)
+	}
+
+	// 2. GitHub URL 파싱
+	owner, repo, err := content.ParseGitHubURL(githubURL)
+	if err != nil {
+		return fmt.Errorf("parse github URL: %w", err)
+	}
+
+	// 3. Discussion 번호 파싱
+	number, err := parseDiscussionNumber(discussionURL.String)
+	if err != nil {
+		return fmt.Errorf("parse discussion URL: %w", err)
+	}
+
+	// 4. summary-config.md + content 파일 로드
+	ghClient := content.NewGitHubClient(cfg.GitHubToken)
+	configBytes, err := ghClient.FetchRaw(ctx, owner, repo, "main", "content/summary-config.md")
+	if err != nil {
+		return fmt.Errorf("summary-config.md fetch 실패: %w", err)
+	}
+	systemPrompt := string(configBytes)
+
+	contentBytes, err := ghClient.FetchRaw(ctx, owner, repo, "main", bodyPath)
+	if err != nil {
+		return fmt.Errorf("content 파일 fetch 실패: %w", err)
+	}
+
+	// 5. Discussion 댓글 fetch
+	ghApp, err := gh.NewApp(cfg.GitHubAppID, cfg.GitHubInstallationID, cfg.GitHubAppPemPath)
+	if err != nil {
+		return fmt.Errorf("github app init 실패: %w", err)
+	}
+	discussion, err := ghApp.FetchDiscussion(ctx, owner, repo, number)
+	if err != nil {
+		return fmt.Errorf("discussion fetch 실패: %w", err)
+	}
+	if len(discussion.Comments) == 0 {
+		logger.Info("댓글 없음, 스킵", "content_id", *contentID)
+		return nil
+	}
+
+	// 6. 댓글을 텍스트로 조합
+	var commentBuf strings.Builder
+	for i, c := range discussion.Comments {
+		fmt.Fprintf(&commentBuf, "### 댓글 %d (%s)\n%s\n\n", i+1, c.Author, c.Body)
+	}
+
+	// 7. AI CLI 실행
+	logger.Info("AI 요약 중...", "comments", len(discussion.Comments), "cmd", *aiCmd)
+	prompt := systemPrompt + "\n\n---\n\n## 오늘의 주제\n\n" + string(contentBytes) + "\n\n---\n\n## 댓글 목록\n\n" + commentBuf.String()
+	cmd := exec.CommandContext(ctx, "sh", "-c", *aiCmd)
+	cmd.Stdin = strings.NewReader(prompt)
+	out, err := cmd.Output()
+	if err != nil {
+		return fmt.Errorf("AI 실행 실패: %w", err)
+	}
+	summary := strings.TrimSpace(string(out))
+
+	// 8. 사용자에게 결과 출력 후 확인
+	fmt.Println("\n" + strings.Repeat("━", 60))
+	fmt.Println(summary)
+	fmt.Println(strings.Repeat("━", 60))
+
+	if !*yes {
+		fmt.Print("\nDiscussion 본문을 업데이트할까요? (y/N): ")
+		scanner := bufio.NewScanner(os.Stdin)
+		scanner.Scan()
+		answer := strings.TrimSpace(strings.ToLower(scanner.Text()))
+		if answer != "y" {
+			fmt.Println("취소됨.")
+			return nil
+		}
+	}
+
+	// 9. Discussion 본문 업데이트
+	newBody := buildDiscussionBody(discussion.Body, summary)
+	if err := ghApp.UpdateDiscussionBody(ctx, owner, repo, discussion.NodeID, newBody); err != nil {
+		return fmt.Errorf("discussion 업데이트 실패: %w", err)
+	}
+	logger.Info("summarize 완료", "content_id", *contentID, "comments", len(discussion.Comments))
+	return nil
+}
+
+func parseDiscussionNumber(discussionURL string) (int, error) {
+	parts := strings.Split(discussionURL, "/discussions/")
+	if len(parts) != 2 || parts[1] == "" {
+		return 0, fmt.Errorf("invalid discussion URL: %s", discussionURL)
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(parts[1]))
+	if err != nil {
+		return 0, fmt.Errorf("invalid discussion number in URL: %s", discussionURL)
+	}
+	return n, nil
+}
+
+func buildDiscussionBody(currentBody, summary string) string {
+	const (
+		markerStart = "<!-- maeilham-summary-start -->"
+		markerEnd   = "<!-- maeilham-summary-end -->"
+	)
+	section := markerStart + "\n## 💬 코멘트 요약\n*AI가 정리한 내용입니다*\n\n" + summary + "\n" + markerEnd
+
+	if before, rest, found := strings.Cut(currentBody, markerStart); found {
+		_, after, _ := strings.Cut(rest, markerEnd)
+		return strings.TrimRight(before, "\n") + "\n\n" + section + after
+	}
+	return currentBody + "\n\n" + section
 }

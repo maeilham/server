@@ -80,6 +80,78 @@ func (a *App) CreateDiscussion(ctx context.Context, owner, repo, repoID, categor
 	return url, result.CreateDiscussion.Discussion.ID, nil
 }
 
+// FetchDiscussion fetches a discussion's node ID, body, and comments by number.
+func (a *App) FetchDiscussion(ctx context.Context, owner, repo string, number int) (*Discussion, error) {
+	var result struct {
+		Repository struct {
+			Discussion struct {
+				ID       string `json:"id"`
+				Body     string `json:"body"`
+				Comments struct {
+					Nodes []struct {
+						Body   string `json:"body"`
+						Author struct {
+							Login string `json:"login"`
+						} `json:"author"`
+					} `json:"nodes"`
+				} `json:"comments"`
+			} `json:"discussion"`
+		} `json:"repository"`
+	}
+
+	err := a.GraphQLForRepo(ctx, owner, repo, `
+		query($owner: String!, $repo: String!, $number: Int!) {
+			repository(owner: $owner, name: $repo) {
+				discussion(number: $number) {
+					id
+					body
+					comments(first: 100) {
+						nodes {
+							body
+							author { login }
+						}
+					}
+				}
+			}
+		}
+	`, map[string]any{"owner": owner, "repo": repo, "number": number}, &result)
+	if err != nil {
+		return nil, err
+	}
+
+	d := result.Repository.Discussion
+	comments := make([]DiscussionComment, len(d.Comments.Nodes))
+	for i, n := range d.Comments.Nodes {
+		comments[i] = DiscussionComment{Author: n.Author.Login, Body: n.Body}
+	}
+	return &Discussion{
+		NodeID:   d.ID,
+		Body:     d.Body,
+		Comments: comments,
+	}, nil
+}
+
+// UpdateDiscussionBody replaces the body of an existing Discussion.
+func (a *App) UpdateDiscussionBody(ctx context.Context, owner, repo, nodeID, body string) error {
+	var result struct {
+		UpdateDiscussion struct {
+			Discussion struct {
+				ID string `json:"id"`
+			} `json:"discussion"`
+		} `json:"updateDiscussion"`
+	}
+	return a.GraphQLForRepo(ctx, owner, repo, `
+		mutation($nodeID: ID!, $body: String!) {
+			updateDiscussion(input: {
+				discussionId: $nodeID
+				body:         $body
+			}) {
+				discussion { id }
+			}
+		}
+	`, map[string]any{"nodeID": nodeID, "body": body}, &result)
+}
+
 // UpdateDiscussionTitle updates only the title of an existing Discussion.
 func (a *App) UpdateDiscussionTitle(ctx context.Context, owner, repo, nodeID, title string) error {
 	var result struct {

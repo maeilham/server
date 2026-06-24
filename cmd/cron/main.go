@@ -435,7 +435,7 @@ func runSummarize(ctx context.Context, logger *slog.Logger, conn *sql.DB, cfg *c
 
 	// 4. summary-config.md + content 파일 로드
 	ghClient := content.NewGitHubClient(cfg.GitHubToken)
-	configBytes, err := ghClient.FetchRaw(ctx, owner, repo, "main", "content/summary-config.md")
+	configBytes, err := ghClient.FetchRaw(ctx, owner, repo, "main", "summary-config.md")
 	if err != nil {
 		return fmt.Errorf("summary-config.md fetch 실패: %w", err)
 	}

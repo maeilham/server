@@ -5,11 +5,22 @@ import (
 	"fmt"
 )
 
+type Discussion struct {
+	NodeID   string
+	Body     string
+	Comments []DiscussionComment
+}
+
+type DiscussionComment struct {
+	Author string
+	Body   string
+}
+
 // RepoMeta fetches the repository node ID and available discussion categories.
 func (a *App) RepoMeta(ctx context.Context, owner, repo string) (repoID string, categories map[string]string, err error) {
 	var result struct {
 		Repository struct {
-			ID                  string `json:"id"`
+			ID                   string `json:"id"`
 			DiscussionCategories struct {
 				Nodes []struct {
 					ID   string `json:"id"`

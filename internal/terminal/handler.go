@@ -159,7 +159,7 @@ func cmdList(rw io.ReadWriter, svc Service) {
 	for _, c := range items {
 		tags := ""
 		if len(c.Tags) > 0 {
-			tags = sprint("  §dim["+strings.Join(c.Tags, ", ")+"]§r")
+			tags = sprint("  §dim[" + strings.Join(c.Tags, ", ") + "]§r")
 		}
 		fmt.Fprint(rw, sprint(fmt.Sprintf("  §bold%s§r  %s%s\n", c.ContentID, c.Title, tags)))
 	}

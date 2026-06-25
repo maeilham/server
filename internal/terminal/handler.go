@@ -168,6 +168,25 @@ func cmdList(rw io.ReadWriter, svc Service) {
 }
 
 func cmdSubscribe(rw io.ReadWriter, svc Service, parts []string) {
+	repos, err := svc.ListActiveRepos(context.Background())
+	if err != nil {
+		fmt.Fprint(rw, sprint(fmt.Sprintf("§red오류: %s§r\n\n", err)))
+		return
+	}
+	if len(repos) == 0 {
+		fmt.Fprint(rw, sprint("§dim등록된 repo가 없습니다.§r\n\n"))
+		return
+	}
+
+	selected := pickRepos(rw, repos)
+	if selected == nil {
+		return
+	}
+	if len(selected) == 0 {
+		fmt.Fprint(rw, sprint("§dim선택된 repo가 없습니다.§r\n\n"))
+		return
+	}
+
 	var email string
 	if len(parts) >= 2 {
 		email = strings.TrimSpace(strings.ToLower(parts[1]))
@@ -179,11 +198,83 @@ func cmdSubscribe(rw io.ReadWriter, svc Service, parts []string) {
 	if email == "" {
 		return
 	}
-	if err := svc.Subscribe(context.Background(), email); err != nil {
+	if err := svc.Subscribe(context.Background(), email, selected); err != nil {
 		fmt.Fprint(rw, sprint(fmt.Sprintf("§red오류: %s§r\n\n", err)))
 		return
 	}
 	fmt.Fprint(rw, sprint("§green✓§r 확인 메일을 보냈습니다. 메일함을 확인해주세요.\n\n"))
+}
+
+func pickRepos(rw io.ReadWriter, repos []*RepoItem) []string {
+	selected := make([]bool, len(repos))
+	cursor := 0
+	firstRender := true
+
+	render := func() {
+		if !firstRender {
+			fmt.Fprintf(rw, "\x1b[%dA", len(repos)+1)
+		}
+		firstRender = false
+		fmt.Fprint(rw, sprint("\r구독할 repo를 선택하세요 §dim(↑↓ 이동, Space 선택, Enter 확인)§r\x1b[K\r\n"))
+		for i, r := range repos {
+			check := "[ ]"
+			if selected[i] {
+				check = "[x]"
+			}
+			arrow := "  "
+			if i == cursor {
+				arrow = "▶ "
+			}
+			if selected[i] {
+				fmt.Fprint(rw, sprint(fmt.Sprintf("\r  %s §green%s§r  %s\x1b[K\r\n", arrow+check, r.Slug, r.DisplayName)))
+			} else {
+				fmt.Fprint(rw, sprint(fmt.Sprintf("\r  %s §bold%s§r  §dim%s§r\x1b[K\r\n", arrow+check, r.Slug, r.DisplayName)))
+			}
+		}
+	}
+
+	render()
+
+	b := make([]byte, 1)
+	for {
+		n, err := rw.Read(b)
+		if err != nil || n == 0 {
+			return nil
+		}
+		ch := b[0]
+		switch {
+		case ch == '\r' || ch == '\n':
+			fmt.Fprint(rw, "\r\n")
+			var out []string
+			for i, r := range repos {
+				if selected[i] {
+					out = append(out, r.Slug)
+				}
+			}
+			return out
+		case ch == ' ':
+			selected[cursor] = !selected[cursor]
+		case ch == 3: // Ctrl+C
+			fmt.Fprint(rw, "\r\n")
+			return nil
+		case ch == '\x1b':
+			seq := make([]byte, 2)
+			rw.Read(seq)
+			if seq[0] == '[' {
+				switch seq[1] {
+				case 'A':
+					if cursor > 0 {
+						cursor--
+					}
+				case 'B':
+					if cursor < len(repos)-1 {
+						cursor++
+					}
+				}
+			}
+		}
+		render()
+	}
 }
 
 func cmdShow(rw io.ReadWriter, svc Service, parts []string) {

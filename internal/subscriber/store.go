@@ -33,8 +33,9 @@ func (s *Store) Upsert(ctx context.Context, email string) (int64, error) {
 	return id, nil
 }
 
-// Confirm sets confirmed_at and creates subscriptions for all active repos.
-func (s *Store) Confirm(ctx context.Context, email string) error {
+// Confirm sets confirmed_at and creates subscriptions.
+// If repoSlugs is non-empty, subscribes only to those repos; otherwise subscribes to all active repos.
+func (s *Store) Confirm(ctx context.Context, email string, repoSlugs []string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -54,13 +55,24 @@ func (s *Store) Confirm(ctx context.Context, email string) error {
 		return fmt.Errorf("get subscriber: %w", err)
 	}
 
-	_, err = tx.ExecContext(ctx, `
-		INSERT INTO subscriptions (subscriber_id, repo_slug)
-		SELECT ?, slug FROM repos WHERE active = 1
-		ON CONFLICT DO NOTHING
-	`, id)
-	if err != nil {
-		return fmt.Errorf("create subscriptions: %w", err)
+	if len(repoSlugs) > 0 {
+		for _, slug := range repoSlugs {
+			if _, err := tx.ExecContext(ctx,
+				`INSERT INTO subscriptions (subscriber_id, repo_slug) VALUES (?, ?) ON CONFLICT DO NOTHING`,
+				id, slug,
+			); err != nil {
+				return fmt.Errorf("create subscription for %s: %w", slug, err)
+			}
+		}
+	} else {
+		_, err = tx.ExecContext(ctx, `
+			INSERT INTO subscriptions (subscriber_id, repo_slug)
+			SELECT ?, slug FROM repos WHERE active = 1
+			ON CONFLICT DO NOTHING
+		`, id)
+		if err != nil {
+			return fmt.Errorf("create subscriptions: %w", err)
+		}
 	}
 
 	return tx.Commit()

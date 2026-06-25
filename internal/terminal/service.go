@@ -13,8 +13,14 @@ import (
 	"github.com/maeilham/server/internal/subscriber"
 )
 
+type RepoItem struct {
+	Slug        string
+	DisplayName string
+}
+
 type Service interface {
-	Subscribe(ctx context.Context, email string) error
+	ListActiveRepos(ctx context.Context) ([]*RepoItem, error)
+	Subscribe(ctx context.Context, email string, repoSlugs []string) error
 	Unsubscribe(ctx context.Context, tok string) error
 	TodayContent(ctx context.Context) (*ContentItem, error)
 	ListContents(ctx context.Context, limit int) ([]*ContentItem, error)
@@ -35,7 +41,24 @@ func NewService(db *sql.DB, store *subscriber.Store, mailer mail.Mailer, ghApp *
 	return &termService{db: db, store: store, mailer: mailer, ghApp: ghApp, secret: secret, apiURL: apiURL}
 }
 
-func (s *termService) Subscribe(ctx context.Context, email string) error {
+func (s *termService) ListActiveRepos(ctx context.Context) ([]*RepoItem, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT slug, display_name FROM repos WHERE active = 1 ORDER BY slug`)
+	if err != nil {
+		return nil, fmt.Errorf("list active repos: %w", err)
+	}
+	defer rows.Close()
+	var out []*RepoItem
+	for rows.Next() {
+		r := &RepoItem{}
+		if err := rows.Scan(&r.Slug, &r.DisplayName); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+func (s *termService) Subscribe(ctx context.Context, email string, repoSlugs []string) error {
 	email = strings.TrimSpace(strings.ToLower(email))
 	if err := s.store.Reactivate(ctx, email); err != nil {
 		return err
@@ -44,7 +67,8 @@ func (s *termService) Subscribe(ctx context.Context, email string) error {
 		return err
 	}
 	tok := token.Make(email, s.secret)
-	confirmURL := fmt.Sprintf("%s/api/confirm?token=%s", s.apiURL, tok)
+	reposParam := strings.Join(repoSlugs, ",")
+	confirmURL := fmt.Sprintf("%s/api/confirm?token=%s&repos=%s", s.apiURL, tok, reposParam)
 	subject, text, html := mail.RenderConfirm(confirmURL)
 	return s.mailer.Send(ctx, mail.Message{
 		To:       email,

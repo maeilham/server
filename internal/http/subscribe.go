@@ -76,7 +76,15 @@ func (h *subscribeHandler) handleConfirm(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	if err := h.store.Confirm(r.Context(), email); err != nil {
+	var repoSlugs []string
+	if repos := r.URL.Query().Get("repos"); repos != "" {
+		for _, s := range strings.Split(repos, ",") {
+			if s = strings.TrimSpace(s); s != "" {
+				repoSlugs = append(repoSlugs, s)
+			}
+		}
+	}
+	if err := h.store.Confirm(r.Context(), email, repoSlugs); err != nil {
 		h.logger.Warn("confirm: db error", "err", err, "email", email)
 		http.Redirect(w, r, h.baseURL+"/?status=invalid", http.StatusSeeOther)
 		return

@@ -39,6 +39,7 @@ func sprint(s string) string {
 }
 
 type ContentItem struct {
+	RepoSlug      string
 	ContentID     string
 	Title         string
 	Preview       string
@@ -161,7 +162,7 @@ func cmdList(rw io.ReadWriter, svc Service) {
 		if len(c.Tags) > 0 {
 			tags = sprint("  §dim[" + strings.Join(c.Tags, ", ") + "]§r")
 		}
-		fmt.Fprint(rw, sprint(fmt.Sprintf("  §bold%s§r  %s%s\n", c.ContentID, c.Title, tags)))
+		fmt.Fprint(rw, sprint(fmt.Sprintf("  §gray%s§r/§bold%s§r  %s%s\n", c.RepoSlug, c.ContentID, c.Title, tags)))
 	}
 	fmt.Fprint(rw, "\r\n")
 }

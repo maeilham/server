@@ -92,6 +92,7 @@ func (s *termService) ListContents(ctx context.Context, limit int) ([]*ContentIt
 	out := make([]*ContentItem, len(items))
 	for i, c := range items {
 		out[i] = &ContentItem{
+			RepoSlug:  c.RepoSlug,
 			ContentID: c.ContentID,
 			Title:     c.Title,
 			Preview:   c.Preview,

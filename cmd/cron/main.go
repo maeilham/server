@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
-	"database/sql"
 	"encoding/base64"
 	"flag"
 	"fmt"
@@ -23,9 +22,10 @@ import (
 	"github.com/maeilham/server/internal/delivery"
 	gh "github.com/maeilham/server/internal/github"
 	"github.com/maeilham/server/internal/mail"
-	"github.com/maeilham/server/internal/pkg/closeutil"
 	"github.com/maeilham/server/internal/pkg/config"
 	"github.com/maeilham/server/internal/pkg/logger"
+	"github.com/maeilham/server/internal/store"
+	"github.com/maeilham/server/internal/subscriber"
 )
 
 func main() {
@@ -54,17 +54,22 @@ func main() {
 		os.Exit(1)
 	}
 
+	repoStore := store.NewRepoStore(conn)
+	contentStore := store.NewContentStore(conn)
+	logStore := store.NewDeliveryLogStore(conn)
+	subStore := subscriber.NewStore(conn)
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
 	switch sub {
 	case "sync":
-		if err := runSync(ctx, logger, conn, cfg, args); err != nil {
+		if err := runSync(ctx, logger, contentStore, repoStore, cfg, args); err != nil {
 			logger.Error("sync failed", "err", err)
 			os.Exit(1)
 		}
 	case "summarize":
-		if err := runSummarize(ctx, logger, conn, cfg, args); err != nil {
+		if err := runSummarize(ctx, logger, contentStore, cfg, args); err != nil {
 			logger.Error("summarize failed", "err", err)
 			os.Exit(1)
 		}
@@ -74,7 +79,7 @@ func main() {
 			os.Exit(1)
 		}
 	case "send-daily":
-		if err := runSendDaily(ctx, logger, conn, cfg, args); err != nil {
+		if err := runSendDaily(ctx, logger, subStore, repoStore, contentStore, logStore, cfg, args); err != nil {
 			logger.Error("send-daily failed", "err", err)
 			os.Exit(1)
 		}
@@ -84,7 +89,7 @@ func main() {
 			os.Exit(1)
 		}
 	case "repo":
-		if err := runRepo(ctx, conn, args); err != nil {
+		if err := runRepo(ctx, repoStore, args); err != nil {
 			logger.Error("repo failed", "err", err)
 			os.Exit(1)
 		}
@@ -94,7 +99,16 @@ func main() {
 	}
 }
 
-func runSendDaily(ctx context.Context, logger *slog.Logger, conn *sql.DB, cfg *config.Config, args []string) error {
+func runSendDaily(
+	ctx context.Context,
+	logger *slog.Logger,
+	subStore *subscriber.Store,
+	repoStore store.RepoRepository,
+	contentStore store.ContentRepository,
+	logStore store.DeliveryLogRepository,
+	cfg *config.Config,
+	args []string,
+) error {
 	fs := flag.NewFlagSet("send-daily", flag.ExitOnError)
 	dryRun := fs.Bool("dry-run", false, "결정만 로그하고 실제 발송/DB 변경은 하지 않음")
 	dateStr := fs.String("date", "", "기준 날짜 YYYY-MM-DD (미지정 시 오늘)")
@@ -123,13 +137,17 @@ func runSendDaily(ctx context.Context, logger *slog.Logger, conn *sql.DB, cfg *c
 		}
 	}
 
-	stats, err := delivery.DailySend(ctx, logger, conn, mailer, delivery.DailySendOptions{
-		Day:       day,
-		DryRun:    *dryRun,
-		BaseURL:   *baseURL,
-		APIURL:    cfg.APIURL,
-		Secret:    cfg.Secret,
-		GitHubApp: ghApp,
+	stats, err := delivery.DailySend(ctx, logger, mailer, delivery.DailySendOptions{
+		Day:          day,
+		DryRun:       *dryRun,
+		BaseURL:      *baseURL,
+		APIURL:       cfg.APIURL,
+		Secret:       cfg.Secret,
+		GitHubApp:    ghApp,
+		SubStore:     subStore,
+		RepoStore:    repoStore,
+		ContentStore: contentStore,
+		LogStore:     logStore,
 	})
 	if err != nil {
 		return err
@@ -178,18 +196,34 @@ func runSendTest(ctx context.Context, logger *slog.Logger, cfg *config.Config, a
 	return nil
 }
 
-func runSync(ctx context.Context, logger *slog.Logger, conn *sql.DB, cfg *config.Config, args []string) error {
+func runSync(
+	ctx context.Context,
+	logger *slog.Logger,
+	contentStore store.ContentRepository,
+	repoStore store.RepoRepository,
+	cfg *config.Config,
+	args []string,
+) error {
 	fs := flag.NewFlagSet("sync", flag.ExitOnError)
 	repoSlug := fs.String("repo", "", "repo slug to sync (must exist in repos table); empty = all active")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 
-	rows, err := selectRepos(ctx, conn, *repoSlug)
+	repos, err := repoStore.ListActive(ctx)
 	if err != nil {
 		return err
 	}
-	if len(rows) == 0 {
+	if *repoSlug != "" {
+		filtered := repos[:0]
+		for _, r := range repos {
+			if r.Slug == *repoSlug {
+				filtered = append(filtered, r)
+			}
+		}
+		repos = filtered
+	}
+	if len(repos) == 0 {
 		logger.Warn("no repos to sync")
 		return nil
 	}
@@ -205,10 +239,10 @@ func runSync(ctx context.Context, logger *slog.Logger, conn *sql.DB, cfg *config
 		}
 	}
 
-	for _, r := range rows {
-		logger := logger.With("repo", r.slug)
-		logger.Info("sync starting", "url", r.url)
-		stats, err := content.Sync(ctx, logger, conn, ghClient, ghApp, r.slug, r.url, "")
+	for _, r := range repos {
+		logger := logger.With("repo", r.Slug)
+		logger.Info("sync starting", "url", r.GitHubURL)
+		stats, err := content.Sync(ctx, logger, contentStore, ghClient, ghApp, r.Slug, r.GitHubURL, "")
 		if err != nil {
 			logger.Error("sync", "err", err)
 			continue
@@ -219,34 +253,6 @@ func runSync(ctx context.Context, logger *slog.Logger, conn *sql.DB, cfg *config
 			"skipped", stats.Skipped, "errors", stats.Errors)
 	}
 	return nil
-}
-
-type repoRow struct {
-	slug string
-	url  string
-}
-
-func selectRepos(ctx context.Context, conn *sql.DB, only string) ([]repoRow, error) {
-	q := `SELECT slug, github_url FROM repos WHERE active = 1`
-	args := []any{}
-	if only != "" {
-		q += ` AND slug = ?`
-		args = append(args, only)
-	}
-	rows, err := conn.QueryContext(ctx, q, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer closeutil.Discard(rows)
-	var out []repoRow
-	for rows.Next() {
-		var r repoRow
-		if err := rows.Scan(&r.slug, &r.url); err != nil {
-			return nil, err
-		}
-		out = append(out, r)
-	}
-	return out, rows.Err()
 }
 
 func runGenLink(cfg *config.Config, args []string) error {
@@ -288,7 +294,7 @@ func makeHMACToken(email, secret string) string {
 	return payload + "." + sig
 }
 
-func runRepo(ctx context.Context, conn *sql.DB, args []string) error {
+func runRepo(ctx context.Context, repoStore store.RepoRepository, args []string) error {
 	if len(args) == 0 {
 		fmt.Fprintln(os.Stderr, "usage: cron repo <add|list|deactivate>")
 		return fmt.Errorf("subcommand required")
@@ -309,44 +315,32 @@ func runRepo(ctx context.Context, conn *sql.DB, args []string) error {
 		if *slug == "" || *url == "" || *name == "" {
 			return fmt.Errorf("--slug, --url, --name 은 필수입니다")
 		}
-		_, err := conn.ExecContext(ctx,
-			`INSERT INTO repos (slug, github_url, display_name, description, active)
-			 VALUES (?, ?, ?, ?, 1)
-			 ON CONFLICT(slug) DO UPDATE SET
-			   github_url = excluded.github_url,
-			   display_name = excluded.display_name,
-			   description = excluded.description,
-			   active = 1`,
-			*slug, *url, *name, *desc,
-		)
-		if err != nil {
+		if err := repoStore.Upsert(ctx, &store.Repo{
+			Slug:        *slug,
+			GitHubURL:   *url,
+			DisplayName: *name,
+			Description: *desc,
+		}); err != nil {
 			return fmt.Errorf("insert repo: %w", err)
 		}
 		fmt.Printf("✓ repo 추가됨: %s\n", *slug)
 		return nil
 
 	case "list":
-		rows, err := conn.QueryContext(ctx,
-			`SELECT slug, display_name, github_url, active FROM repos ORDER BY slug`)
+		repos, err := repoStore.ListAll(ctx)
 		if err != nil {
 			return err
 		}
-		defer rows.Close()
 		fmt.Printf("%-25s %-10s %s\n", "SLUG", "ACTIVE", "URL")
 		fmt.Println(strings.Repeat("-", 70))
-		for rows.Next() {
-			var slug, name, url string
-			var active int
-			if err := rows.Scan(&slug, &name, &url, &active); err != nil {
-				return err
-			}
+		for _, r := range repos {
 			status := "✓"
-			if active == 0 {
+			if !r.Active {
 				status = "✗"
 			}
-			fmt.Printf("%-25s %-10s %s  (%s)\n", slug, status, url, name)
+			fmt.Printf("%-25s %-10s %s  (%s)\n", r.Slug, status, r.GitHubURL, r.DisplayName)
 		}
-		return rows.Err()
+		return nil
 
 	case "deactivate":
 		fs := flag.NewFlagSet("repo deactivate", flag.ExitOnError)
@@ -357,8 +351,7 @@ func runRepo(ctx context.Context, conn *sql.DB, args []string) error {
 		if *slug == "" {
 			return fmt.Errorf("--slug 은 필수입니다")
 		}
-		_, err := conn.ExecContext(ctx, `UPDATE repos SET active = 0 WHERE slug = ?`, *slug)
-		if err != nil {
+		if err := repoStore.Deactivate(ctx, *slug); err != nil {
 			return err
 		}
 		fmt.Printf("✓ repo 비활성화됨: %s\n", *slug)
@@ -388,7 +381,7 @@ commands:
                                테스트용 링크 생성`)
 }
 
-func runSummarize(ctx context.Context, logger *slog.Logger, conn *sql.DB, cfg *config.Config, args []string) error {
+func runSummarize(ctx context.Context, logger *slog.Logger, contentStore store.ContentRepository, cfg *config.Config, args []string) error {
 	fs := flag.NewFlagSet("summarize", flag.ExitOnError)
 	repoSlug := fs.String("repo", "", "레포 슬러그")
 	contentID := fs.String("content-id", "", "콘텐츠 ID")
@@ -402,33 +395,25 @@ func runSummarize(ctx context.Context, logger *slog.Logger, conn *sql.DB, cfg *c
 	}
 
 	// 1. DB에서 github_url, discussion_url, body_path 조회
-	var githubURL, bodyPath string
-	var discussionURL sql.NullString
-	err := conn.QueryRowContext(ctx, `
-		SELECT r.github_url, c.discussion_url, c.body_path
-		  FROM contents c
-		  JOIN repos r ON r.slug = c.repo_slug
-		 WHERE c.repo_slug = ? AND c.content_id = ? AND c.deleted_at IS NULL`,
-		*repoSlug, *contentID,
-	).Scan(&githubURL, &discussionURL, &bodyPath)
-	if err == sql.ErrNoRows {
-		return fmt.Errorf("콘텐츠를 찾을 수 없습니다: %s/%s", *repoSlug, *contentID)
-	}
+	c, err := contentStore.GetByID(ctx, *contentID)
 	if err != nil {
 		return fmt.Errorf("query content: %w", err)
 	}
-	if !discussionURL.Valid || discussionURL.String == "" {
+	if c == nil || c.RepoSlug != *repoSlug {
+		return fmt.Errorf("콘텐츠를 찾을 수 없습니다: %s/%s", *repoSlug, *contentID)
+	}
+	if c.DiscussionURL == "" {
 		return fmt.Errorf("discussion URL이 없습니다 (content_id: %s)", *contentID)
 	}
 
 	// 2. GitHub URL 파싱
-	owner, repo, err := content.ParseGitHubURL(githubURL)
+	owner, repo, err := content.ParseGitHubURL(c.GitHubURL)
 	if err != nil {
 		return fmt.Errorf("parse github URL: %w", err)
 	}
 
 	// 3. Discussion 번호 파싱
-	number, err := parseDiscussionNumber(discussionURL.String)
+	number, err := parseDiscussionNumber(c.DiscussionURL)
 	if err != nil {
 		return fmt.Errorf("parse discussion URL: %w", err)
 	}
@@ -441,7 +426,7 @@ func runSummarize(ctx context.Context, logger *slog.Logger, conn *sql.DB, cfg *c
 	}
 	systemPrompt := string(configBytes)
 
-	contentBytes, err := ghClient.FetchRaw(ctx, owner, repo, "main", bodyPath)
+	contentBytes, err := ghClient.FetchRaw(ctx, owner, repo, "main", c.BodyPath)
 	if err != nil {
 		return fmt.Errorf("content 파일 fetch 실패: %w", err)
 	}
@@ -462,8 +447,8 @@ func runSummarize(ctx context.Context, logger *slog.Logger, conn *sql.DB, cfg *c
 
 	// 6. 댓글을 텍스트로 조합
 	var commentBuf strings.Builder
-	for i, c := range discussion.Comments {
-		fmt.Fprintf(&commentBuf, "### 댓글 %d (%s)\n%s\n\n", i+1, c.Author, c.Body)
+	for i, cm := range discussion.Comments {
+		fmt.Fprintf(&commentBuf, "### 댓글 %d (%s)\n%s\n\n", i+1, cm.Author, cm.Body)
 	}
 
 	// 7. AI CLI 실행

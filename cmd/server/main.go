@@ -15,6 +15,7 @@ import (
 	"github.com/maeilham/server/internal/mail"
 	"github.com/maeilham/server/internal/pkg/config"
 	"github.com/maeilham/server/internal/pkg/logger"
+	"github.com/maeilham/server/internal/store"
 	"github.com/maeilham/server/internal/subscriber"
 	"github.com/maeilham/server/internal/terminal"
 )
@@ -39,7 +40,9 @@ func main() {
 	log.Info("db ready", "dsn", cfg.DatabaseURL)
 
 	mailer := mail.New(log, cfg.ResendAPIKey, cfg.MailFromEmail, cfg.MailFromName)
-	store := subscriber.NewStore(conn)
+	subStore := subscriber.NewStore(conn)
+	repoStore := store.NewRepoStore(conn)
+	contentStore := store.NewContentStore(conn)
 
 	var ghApp *gh.App
 	if cfg.GitHubAppID != 0 && cfg.GitHubAppPemPath != "" && cfg.GitHubInstallationID != 0 {
@@ -50,7 +53,7 @@ func main() {
 		}
 	}
 
-	termSvc := terminal.NewService(conn, store, mailer, ghApp, cfg.Secret, cfg.APIURL)
+	termSvc := terminal.NewService(subStore, repoStore, contentStore, mailer, ghApp, cfg.Secret, cfg.APIURL)
 	termHandler := terminal.NewHandler(termSvc)
 
 	// SSH 서버 시작
@@ -69,7 +72,7 @@ func main() {
 		Addr: cfg.HTTPAddr,
 		Handler: httpsrv.NewRouter(httpsrv.Deps{
 			Logger:  log,
-			Store:   store,
+			Store:   subStore,
 			Mailer:  mailer,
 			BaseURL: cfg.BaseURL,
 			APIURL:  cfg.APIURL,

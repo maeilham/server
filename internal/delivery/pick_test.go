@@ -7,6 +7,8 @@ import (
 	"time"
 
 	dbpkg "github.com/maeilham/server/internal/db"
+	"github.com/maeilham/server/internal/store"
+	"github.com/maeilham/server/internal/subscriber"
 )
 
 func newTestDB(t *testing.T) *sql.DB {
@@ -62,13 +64,18 @@ func subscribe(t *testing.T, db *sql.DB, subID int64, repoSlug string, weight in
 		subID, repoSlug, weight)
 }
 
+func newStores(db *sql.DB) (*subscriber.Store, store.ContentRepository) {
+	return subscriber.NewStore(db), store.NewContentStore(db)
+}
+
 // ---------------- TodayContentForRepo ----------------
 
-func TestTodayContentForRepo_Empty(t *testing.T) {
+func TestTodayForRepo_Empty(t *testing.T) {
 	db := newTestDB(t)
 	insertRepo(t, db, "be")
+	_, cs := newStores(db)
 
-	got, err := TodayContentForRepo(context.Background(), db, "be")
+	got, err := cs.TodayForRepo(context.Background(), "be")
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -77,7 +84,7 @@ func TestTodayContentForRepo_Empty(t *testing.T) {
 	}
 }
 
-func TestTodayContentForRepo_OrdersByRotationThenContentID(t *testing.T) {
+func TestTodayForRepo_OrdersByRotationThenContentID(t *testing.T) {
 	db := newTestDB(t)
 	insertRepo(t, db, "be")
 	insertContent(t, db, "be", "0001")
@@ -86,8 +93,9 @@ func TestTodayContentForRepo_OrdersByRotationThenContentID(t *testing.T) {
 
 	// 0001 already rotated, so 0002 should now be "today"
 	mustExec(t, db, `UPDATE contents SET rotation_count = 1 WHERE content_id = '0001'`)
+	_, cs := newStores(db)
 
-	got, err := TodayContentForRepo(context.Background(), db, "be")
+	got, err := cs.TodayForRepo(context.Background(), "be")
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -96,14 +104,15 @@ func TestTodayContentForRepo_OrdersByRotationThenContentID(t *testing.T) {
 	}
 }
 
-func TestTodayContentForRepo_IgnoresDeleted(t *testing.T) {
+func TestTodayForRepo_IgnoresDeleted(t *testing.T) {
 	db := newTestDB(t)
 	insertRepo(t, db, "be")
 	insertContent(t, db, "be", "0001")
 	insertContent(t, db, "be", "0002")
 	mustExec(t, db, `UPDATE contents SET deleted_at = CURRENT_TIMESTAMP WHERE content_id = '0001'`)
+	_, cs := newStores(db)
 
-	got, err := TodayContentForRepo(context.Background(), db, "be")
+	got, err := cs.TodayForRepo(context.Background(), "be")
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -121,8 +130,9 @@ func TestPickForSubscriber_Unconfirmed(t *testing.T) {
 	insertRepo(t, db, "be")
 	insertContent(t, db, "be", "0001")
 	subscribe(t, db, id, "be", 3)
+	ss, cs := newStores(db)
 
-	got, err := PickForSubscriber(context.Background(), db, id, time.Now())
+	got, err := PickForSubscriber(context.Background(), ss, cs, id, time.Now())
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -138,8 +148,9 @@ func TestPickForSubscriber_Paused(t *testing.T) {
 	insertRepo(t, db, "be")
 	insertContent(t, db, "be", "0001")
 	subscribe(t, db, id, "be", 3)
+	ss, cs := newStores(db)
 
-	got, err := PickForSubscriber(context.Background(), db, id, time.Now())
+	got, err := PickForSubscriber(context.Background(), ss, cs, id, time.Now())
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -151,8 +162,9 @@ func TestPickForSubscriber_Paused(t *testing.T) {
 func TestPickForSubscriber_NoSubscriptions(t *testing.T) {
 	db := newTestDB(t)
 	id := insertConfirmedSubscriber(t, db, "x@x.kr")
+	ss, cs := newStores(db)
 
-	got, err := PickForSubscriber(context.Background(), db, id, time.Now())
+	got, err := PickForSubscriber(context.Background(), ss, cs, id, time.Now())
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -166,8 +178,9 @@ func TestPickForSubscriber_NoEligibleContent(t *testing.T) {
 	id := insertConfirmedSubscriber(t, db, "x@x.kr")
 	insertRepo(t, db, "be") // no contents
 	subscribe(t, db, id, "be", 3)
+	ss, cs := newStores(db)
 
-	got, err := PickForSubscriber(context.Background(), db, id, time.Now())
+	got, err := PickForSubscriber(context.Background(), ss, cs, id, time.Now())
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -182,8 +195,9 @@ func TestPickForSubscriber_SingleSubscription(t *testing.T) {
 	insertRepo(t, db, "be")
 	insertContent(t, db, "be", "0001")
 	subscribe(t, db, id, "be", 3)
+	ss, cs := newStores(db)
 
-	got, err := PickForSubscriber(context.Background(), db, id, time.Now())
+	got, err := PickForSubscriber(context.Background(), ss, cs, id, time.Now())
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -202,8 +216,9 @@ func TestPickForSubscriber_IgnoresInactiveRepo(t *testing.T) {
 	insertContent(t, db, "fe", "0001")
 	subscribe(t, db, id, "be", 5)
 	subscribe(t, db, id, "fe", 1)
+	ss, cs := newStores(db)
 
-	got, err := PickForSubscriber(context.Background(), db, id, time.Now())
+	got, err := PickForSubscriber(context.Background(), ss, cs, id, time.Now())
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -221,11 +236,12 @@ func TestPickForSubscriber_DeterministicSameDay(t *testing.T) {
 	insertContent(t, db, "fe", "0001")
 	subscribe(t, db, id, "be", 3)
 	subscribe(t, db, id, "fe", 3)
+	ss, cs := newStores(db)
 
 	day := time.Date(2026, 5, 24, 0, 0, 0, 0, time.UTC)
-	first, _ := PickForSubscriber(context.Background(), db, id, day)
+	first, _ := PickForSubscriber(context.Background(), ss, cs, id, day)
 	for range 5 {
-		got, _ := PickForSubscriber(context.Background(), db, id, day)
+		got, _ := PickForSubscriber(context.Background(), ss, cs, id, day)
 		if got.RepoSlug != first.RepoSlug || got.ContentID != first.ContentID {
 			t.Fatalf("not deterministic: first=%v, retry=%v", first, got)
 		}
@@ -241,13 +257,14 @@ func TestPickForSubscriber_DifferentDayMayDiffer(t *testing.T) {
 	insertContent(t, db, "fe", "0001")
 	subscribe(t, db, id, "be", 3)
 	subscribe(t, db, id, "fe", 3)
+	ss, cs := newStores(db)
 
 	// 다양한 날짜를 시도해서 적어도 한 번은 다른 repo가 뽑히는지 확인
 	day0 := time.Date(2026, 5, 24, 0, 0, 0, 0, time.UTC)
-	first, _ := PickForSubscriber(context.Background(), db, id, day0)
+	first, _ := PickForSubscriber(context.Background(), ss, cs, id, day0)
 	differs := false
 	for i := 1; i <= 60; i++ {
-		got, _ := PickForSubscriber(context.Background(), db, id, day0.AddDate(0, 0, i))
+		got, _ := PickForSubscriber(context.Background(), ss, cs, id, day0.AddDate(0, 0, i))
 		if got.RepoSlug != first.RepoSlug {
 			differs = true
 			break
@@ -264,6 +281,7 @@ func TestPickForSubscriber_WeightDistribution(t *testing.T) {
 	insertRepo(t, db, "fe")
 	insertContent(t, db, "be", "0001")
 	insertContent(t, db, "fe", "0001")
+	ss, cs := newStores(db)
 
 	// 충분히 많은 구독자를 만들어 다른 시드로 분포 검증
 	beCount := 0
@@ -271,9 +289,9 @@ func TestPickForSubscriber_WeightDistribution(t *testing.T) {
 	const n = 1000
 	for i := range n {
 		id := insertConfirmedSubscriber(t, db, "u"+stringFromInt(i)+"@x.kr")
-		subscribe(t, db, id, "be", 5) // be weight 5
-		subscribe(t, db, id, "fe", 1) // fe weight 1
-		got, _ := PickForSubscriber(context.Background(), db, id, time.Now())
+		subscribe(t, db, id, "be", 5)
+		subscribe(t, db, id, "fe", 1)
+		got, _ := PickForSubscriber(context.Background(), ss, cs, id, time.Now())
 		switch got.RepoSlug {
 		case "be":
 			beCount++

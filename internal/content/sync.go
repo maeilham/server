@@ -2,7 +2,6 @@ package content
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -11,7 +10,7 @@ import (
 	"strings"
 
 	gh "github.com/maeilham/server/internal/github"
-	"github.com/maeilham/server/internal/pkg/closeutil"
+	"github.com/maeilham/server/internal/store"
 )
 
 type SyncStats struct {
@@ -32,7 +31,7 @@ var filenameRe = regexp.MustCompile(`^(\d{4})-[a-z0-9-]+\.md$`)
 func Sync(
 	ctx context.Context,
 	logger *slog.Logger,
-	db *sql.DB,
+	contentStore store.ContentRepository,
 	ghClient *GitHubClient,
 	app *gh.App,
 	repoSlug, githubURL, ref string,
@@ -49,9 +48,13 @@ func Sync(
 		return stats, fmt.Errorf("list tree: %w", err)
 	}
 
-	current, err := loadCurrent(ctx, db, repoSlug)
+	existing, err := contentStore.ListByRepo(ctx, repoSlug)
 	if err != nil {
 		return stats, fmt.Errorf("load current contents: %w", err)
+	}
+	current := make(map[string]*store.Content, len(existing))
+	for _, c := range existing {
+		current[c.ContentID] = c
 	}
 
 	seen := make(map[string]struct{}, len(tree))
@@ -68,8 +71,8 @@ func Sync(
 		contentID := match[1]
 		seen[contentID] = struct{}{}
 
-		existing, exists := current[contentID]
-		if exists && existing.sha == e.SHA {
+		prev, exists := current[contentID]
+		if exists && prev.GithubSHA == e.SHA {
 			continue // unchanged
 		}
 
@@ -87,7 +90,28 @@ func Sync(
 			continue
 		}
 
-		inserted, err := upsert(ctx, db, repoSlug, contentID, parsed, e.Path, e.SHA)
+		tagsJSON, err := encodeTags(parsed.Frontmatter.Tags)
+		if err != nil {
+			logger.Error("encode tags", "file", e.Path, "err", err)
+			stats.Errors++
+			continue
+		}
+
+		c := &store.Content{
+			RepoSlug:     repoSlug,
+			ContentID:    contentID,
+			Title:        parsed.Frontmatter.Title,
+			Preview:      parsed.Frontmatter.Preview,
+			Tags:         tagsJSON,
+			BodyPath:     e.Path,
+			GithubSHA:    e.SHA,
+		}
+		if parsed.Frontmatter.Source != nil {
+			c.SourceURL = strings.TrimSpace(parsed.Frontmatter.Source.URL)
+			c.SourceAuthor = strings.TrimSpace(parsed.Frontmatter.Source.Author)
+		}
+
+		inserted, err := contentStore.Upsert(ctx, c)
 		if err != nil {
 			logger.Error("upsert", "file", e.Path, "err", err)
 			stats.Errors++
@@ -97,9 +121,9 @@ func Sync(
 			stats.Inserted++
 		} else {
 			stats.Updated++
-			if app != nil && existing.discussionNodeID != "" {
+			if app != nil && exists && prev.DiscussionNodeID != "" {
 				title := fmt.Sprintf("[매일함] %s", parsed.Frontmatter.Title)
-				if err := app.UpdateDiscussionTitle(ctx, owner, repoName, existing.discussionNodeID, title); err != nil {
+				if err := app.UpdateDiscussionTitle(ctx, owner, repoName, prev.DiscussionNodeID, title); err != nil {
 					logger.Warn("discussion title update failed (non-fatal)", "content", contentID, "err", err)
 				}
 			}
@@ -110,11 +134,7 @@ func Sync(
 		if _, ok := seen[contentID]; ok {
 			continue
 		}
-		if _, err := db.ExecContext(ctx,
-			`UPDATE contents SET deleted_at = CURRENT_TIMESTAMP
-			 WHERE repo_slug = ? AND content_id = ? AND deleted_at IS NULL`,
-			repoSlug, contentID,
-		); err != nil {
+		if err := contentStore.MarkDeleted(ctx, repoSlug, contentID); err != nil {
 			logger.Error("mark deleted", "content_id", contentID, "err", err)
 			stats.Errors++
 			continue
@@ -123,94 +143,6 @@ func Sync(
 	}
 
 	return stats, nil
-}
-
-type currentEntry struct {
-	sha              string
-	discussionNodeID string
-}
-
-func loadCurrent(ctx context.Context, db *sql.DB, repoSlug string) (map[string]currentEntry, error) {
-	rows, err := db.QueryContext(ctx,
-		`SELECT content_id, COALESCE(github_sha, ''), COALESCE(discussion_node_id, '')
-		 FROM contents WHERE repo_slug = ? AND deleted_at IS NULL`,
-		repoSlug,
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer closeutil.Discard(rows)
-	m := map[string]currentEntry{}
-	for rows.Next() {
-		var id string
-		var e currentEntry
-		if err := rows.Scan(&id, &e.sha, &e.discussionNodeID); err != nil {
-			return nil, err
-		}
-		m[id] = e
-	}
-	return m, rows.Err()
-}
-
-// upsert returns true if a new row was inserted, false if an existing row was updated.
-func upsert(
-	ctx context.Context, db *sql.DB,
-	repoSlug, contentID string, p *ParsedContent,
-	bodyPath, githubSHA string,
-) (bool, error) {
-	tagsJSON, err := encodeTags(p.Frontmatter.Tags)
-	if err != nil {
-		return false, err
-	}
-
-	var sourceURL, sourceAuthor *string
-	if p.Frontmatter.Source != nil {
-		if s := strings.TrimSpace(p.Frontmatter.Source.URL); s != "" {
-			sourceURL = &s
-		}
-		if s := strings.TrimSpace(p.Frontmatter.Source.Author); s != "" {
-			sourceAuthor = &s
-		}
-	}
-
-	var existing sql.NullString
-	err = db.QueryRowContext(ctx,
-		`SELECT content_id FROM contents WHERE repo_slug = ? AND content_id = ?`,
-		repoSlug, contentID,
-	).Scan(&existing)
-
-	switch {
-	case err == sql.ErrNoRows:
-		_, err = db.ExecContext(ctx, `
-			INSERT INTO contents
-			  (repo_slug, content_id, title, preview, tags, source_url, source_author,
-			   body_path, github_sha)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			repoSlug, contentID, p.Frontmatter.Title, p.Frontmatter.Preview,
-			tagsJSON, sourceURL, sourceAuthor, bodyPath, githubSHA)
-		if err != nil {
-			return false, err
-		}
-		return true, nil
-	case err != nil:
-		return false, err
-	}
-
-	_, err = db.ExecContext(ctx, `
-		UPDATE contents
-		   SET title         = ?,
-		       preview       = ?,
-		       tags          = ?,
-		       source_url    = ?,
-		       source_author = ?,
-		       body_path     = ?,
-		       github_sha    = ?,
-		       deleted_at    = NULL,
-		       synced_at     = CURRENT_TIMESTAMP
-		 WHERE repo_slug = ? AND content_id = ?`,
-		p.Frontmatter.Title, p.Frontmatter.Preview, tagsJSON, sourceURL, sourceAuthor,
-		bodyPath, githubSHA, repoSlug, contentID)
-	return false, err
 }
 
 func encodeTags(tags []string) (string, error) {

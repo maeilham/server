@@ -5,7 +5,19 @@ import (
 	"database/sql"
 	"fmt"
 	"time"
+
+	"github.com/maeilham/server/internal/pkg/closeutil"
 )
+
+type Subscriber struct {
+	ID    int64
+	Email string
+}
+
+type Subscription struct {
+	RepoSlug string
+	Weight   int
+}
 
 type Store struct {
 	db *sql.DB
@@ -97,6 +109,67 @@ func (s *Store) Unsubscribe(ctx context.Context, email string) error {
 		time.Now().UTC(), email,
 	)
 	return err
+}
+
+// ListActive returns all confirmed, non-paused, non-unsubscribed subscribers.
+func (s *Store) ListActive(ctx context.Context) ([]Subscriber, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, email FROM subscribers
+		 WHERE confirmed_at IS NOT NULL
+		   AND paused_at IS NULL
+		   AND unsubscribed_at IS NULL
+		 ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	defer closeutil.Discard(rows)
+	var out []Subscriber
+	for rows.Next() {
+		var s Subscriber
+		if err := rows.Scan(&s.ID, &s.Email); err != nil {
+			return nil, err
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
+}
+
+// IsActive reports whether the subscriber is confirmed and not paused/unsubscribed.
+func (s *Store) IsActive(ctx context.Context, id int64) (bool, error) {
+	var confirmed, paused, unsubscribed sql.NullTime
+	err := s.db.QueryRowContext(ctx,
+		`SELECT confirmed_at, paused_at, unsubscribed_at FROM subscribers WHERE id = ?`, id,
+	).Scan(&confirmed, &paused, &unsubscribed)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("load subscriber %d: %w", id, err)
+	}
+	return confirmed.Valid && !paused.Valid && !unsubscribed.Valid, nil
+}
+
+// LoadSubscriptions returns active subscriptions for a subscriber.
+func (s *Store) LoadSubscriptions(ctx context.Context, id int64) ([]Subscription, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT s.repo_slug, s.weight
+		  FROM subscriptions s
+		  JOIN repos r ON r.slug = s.repo_slug
+		 WHERE s.subscriber_id = ? AND r.active = 1
+		 ORDER BY s.repo_slug`, id)
+	if err != nil {
+		return nil, fmt.Errorf("load subscriptions: %w", err)
+	}
+	defer closeutil.Discard(rows)
+	var out []Subscription
+	for rows.Next() {
+		var sub Subscription
+		if err := rows.Scan(&sub.RepoSlug, &sub.Weight); err != nil {
+			return nil, err
+		}
+		out = append(out, sub)
+	}
+	return out, rows.Err()
 }
 
 // IsUnsubscribed reports whether the email has unsubscribed.

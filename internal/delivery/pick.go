@@ -1,7 +1,7 @@
 // Package delivery는 매일 발송할 콘텐츠를 선택하는 로직을 담는다.
 //
 // 핵심 원칙: 같은 repo를 구독한 사용자는 같은 날 같은 콘텐츠를 받는다 (뉴스 모델).
-//   - 각 repo의 "오늘의 콘텐츠"는 rotation_count, send_order 오름차순 1개로 결정됨
+//   - 각 repo의 "오늘의 콘텐츠"는 rotation_count, content_id 오름차순 1개로 결정됨
 //   - 사용자는 구독한 repo 중 가중치 확률로 1개 repo를 뽑고, 그 repo의 오늘 콘텐츠를 받음
 //   - 가중 추첨은 (subscriber, day) 시드로 결정론적이라 재시도 시 동일 결과를 보장
 package delivery
@@ -9,25 +9,14 @@ package delivery
 import (
 	"context"
 	"crypto/sha256"
-	"database/sql"
 	"encoding/binary"
 	"fmt"
 	"strconv"
 	"time"
 
-	"github.com/maeilham/server/internal/pkg/closeutil"
+	"github.com/maeilham/server/internal/store"
+	"github.com/maeilham/server/internal/subscriber"
 )
-
-type Content struct {
-	RepoSlug      string
-	ContentID     string
-	Title         string
-	Preview       string
-	BodyPath      string
-	GitHubURL     string // repos.github_url (raw URL 구성용)
-	DiscussionURL sql.NullString
-	RotationCount int
-}
 
 // PickForSubscriber chooses which today's content to deliver to subscriberID.
 //
@@ -40,14 +29,22 @@ type Content struct {
 //
 // The pick is deterministic for a given (subscriberID, today): retries on the
 // same day return the same content. This makes retries idempotent.
-func PickForSubscriber(ctx context.Context, db *sql.DB, subscriberID int64, today time.Time) (*Content, error) {
-	if active, err := isActiveSubscriber(ctx, db, subscriberID); err != nil {
+func PickForSubscriber(
+	ctx context.Context,
+	subStore *subscriber.Store,
+	contentStore store.ContentRepository,
+	subscriberID int64,
+	today time.Time,
+) (*store.Content, error) {
+	active, err := subStore.IsActive(ctx, subscriberID)
+	if err != nil {
 		return nil, err
-	} else if !active {
+	}
+	if !active {
 		return nil, nil
 	}
 
-	subs, err := loadSubscriptions(ctx, db, subscriberID)
+	subs, err := subStore.LoadSubscriptions(ctx, subscriberID)
 	if err != nil {
 		return nil, err
 	}
@@ -57,13 +54,13 @@ func PickForSubscriber(ctx context.Context, db *sql.DB, subscriberID int64, toda
 
 	type candidate struct {
 		weight  int
-		content *Content
+		content *store.Content
 	}
 	candidates := make([]candidate, 0, len(subs))
 	for _, s := range subs {
-		c, err := TodayContentForRepo(ctx, db, s.RepoSlug)
+		c, err := contentStore.TodayForRepo(ctx, s.RepoSlug)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("today content for %s: %w", s.RepoSlug, err)
 		}
 		if c == nil {
 			continue
@@ -88,57 +85,7 @@ func PickForSubscriber(ctx context.Context, db *sql.DB, subscriberID int64, toda
 			return c.content, nil
 		}
 	}
-	// unreachable when totalWeight > 0
 	return candidates[len(candidates)-1].content, nil
-}
-
-type subscription struct {
-	RepoSlug string
-	Weight   int
-}
-
-func isActiveSubscriber(ctx context.Context, db *sql.DB, id int64) (bool, error) {
-	var paused, unsubscribed sql.NullTime
-	var confirmed sql.NullTime
-	err := db.QueryRowContext(ctx,
-		`SELECT confirmed_at, paused_at, unsubscribed_at FROM subscribers WHERE id = ?`,
-		id,
-	).Scan(&confirmed, &paused, &unsubscribed)
-	if err == sql.ErrNoRows {
-		return false, nil
-	}
-	if err != nil {
-		return false, fmt.Errorf("load subscriber %d: %w", id, err)
-	}
-	if !confirmed.Valid {
-		return false, nil
-	}
-	if paused.Valid || unsubscribed.Valid {
-		return false, nil
-	}
-	return true, nil
-}
-
-func loadSubscriptions(ctx context.Context, db *sql.DB, id int64) ([]subscription, error) {
-	rows, err := db.QueryContext(ctx, `
-		SELECT s.repo_slug, s.weight
-		  FROM subscriptions s
-		  JOIN repos r ON r.slug = s.repo_slug
-		 WHERE s.subscriber_id = ? AND r.active = 1
-		 ORDER BY s.repo_slug`, id)
-	if err != nil {
-		return nil, fmt.Errorf("load subscriptions: %w", err)
-	}
-	defer closeutil.Discard(rows)
-	var out []subscription
-	for rows.Next() {
-		var s subscription
-		if err := rows.Scan(&s.RepoSlug, &s.Weight); err != nil {
-			return nil, err
-		}
-		out = append(out, s)
-	}
-	return out, rows.Err()
 }
 
 // dailyPickSeed returns a deterministic seed for (subscriberID, today).
@@ -147,91 +94,4 @@ func dailyPickSeed(subscriberID int64, today time.Time) uint64 {
 	key := strconv.FormatInt(subscriberID, 10) + "|" + today.Format("2006-01-02")
 	sum := sha256.Sum256([]byte(key))
 	return binary.BigEndian.Uint64(sum[:8])
-}
-
-// GetContent returns a single content item by contentID across all active repos.
-func GetContent(ctx context.Context, db *sql.DB, contentID string) (*Content, error) {
-	var c Content
-	err := db.QueryRowContext(ctx, `
-		SELECT c.repo_slug, c.content_id, c.title, c.preview, c.body_path,
-		       r.github_url, c.discussion_url, c.rotation_count
-		  FROM contents c
-		  JOIN repos r ON r.slug = c.repo_slug
-		 WHERE c.content_id = ? AND c.deleted_at IS NULL AND r.active = 1
-		 LIMIT 1`, contentID,
-	).Scan(
-		&c.RepoSlug, &c.ContentID, &c.Title, &c.Preview, &c.BodyPath,
-		&c.GitHubURL, &c.DiscussionURL, &c.RotationCount,
-	)
-	if err == sql.ErrNoRows {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, fmt.Errorf("get content %s: %w", contentID, err)
-	}
-	return &c, nil
-}
-
-// TodayContent returns today's content across all active repos (first active repo, lowest rotation_count).
-func TodayContent(ctx context.Context, db *sql.DB) (*Content, error) {
-	var slug string
-	err := db.QueryRowContext(ctx, `SELECT slug FROM repos WHERE active = 1 ORDER BY slug LIMIT 1`).Scan(&slug)
-	if err == sql.ErrNoRows {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, fmt.Errorf("query active repo: %w", err)
-	}
-	return TodayContentForRepo(ctx, db, slug)
-}
-
-// ListContents returns the most recently synced contents across all active repos.
-func ListContents(ctx context.Context, db *sql.DB, limit int) ([]*Content, error) {
-	rows, err := db.QueryContext(ctx, `
-		SELECT c.repo_slug, c.content_id, c.title, c.preview, c.body_path,
-		       r.github_url, c.discussion_url, c.rotation_count
-		  FROM contents c
-		  JOIN repos r ON r.slug = c.repo_slug
-		 WHERE c.deleted_at IS NULL AND r.active = 1
-		 ORDER BY c.content_id DESC
-		 LIMIT ?`, limit)
-	if err != nil {
-		return nil, fmt.Errorf("list contents: %w", err)
-	}
-	defer rows.Close()
-	var out []*Content
-	for rows.Next() {
-		var c Content
-		if err := rows.Scan(&c.RepoSlug, &c.ContentID, &c.Title, &c.Preview, &c.BodyPath,
-			&c.GitHubURL, &c.DiscussionURL, &c.RotationCount); err != nil {
-			return nil, err
-		}
-		out = append(out, &c)
-	}
-	return out, rows.Err()
-}
-
-// TodayContentForRepo returns the single content that any subscriber of repoSlug
-// will receive today. Returns (nil, nil) if the repo has no eligible content.
-func TodayContentForRepo(ctx context.Context, db *sql.DB, repoSlug string) (*Content, error) {
-	var c Content
-	err := db.QueryRowContext(ctx, `
-		SELECT c.repo_slug, c.content_id, c.title, c.preview, c.body_path,
-		       r.github_url, c.discussion_url, c.rotation_count
-		  FROM contents c
-		  JOIN repos r ON r.slug = c.repo_slug
-		 WHERE c.repo_slug = ? AND c.deleted_at IS NULL
-		 ORDER BY c.rotation_count ASC, c.content_id ASC
-		 LIMIT 1`, repoSlug,
-	).Scan(
-		&c.RepoSlug, &c.ContentID, &c.Title, &c.Preview, &c.BodyPath,
-		&c.GitHubURL, &c.DiscussionURL, &c.RotationCount,
-	)
-	if err == sql.ErrNoRows {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, fmt.Errorf("query today content for %s: %w", repoSlug, err)
-	}
-	return &c, nil
 }

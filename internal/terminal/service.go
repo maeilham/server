@@ -2,7 +2,6 @@ package terminal
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"strings"
 
@@ -10,6 +9,7 @@ import (
 	gh "github.com/maeilham/server/internal/github"
 	"github.com/maeilham/server/internal/mail"
 	"github.com/maeilham/server/internal/pkg/token"
+	"github.com/maeilham/server/internal/store"
 	"github.com/maeilham/server/internal/subscriber"
 )
 
@@ -29,41 +29,52 @@ type Service interface {
 }
 
 type termService struct {
-	db     *sql.DB
-	store  *subscriber.Store
-	mailer mail.Mailer
-	ghApp  *gh.App
-	secret string
-	apiURL string
+	subStore     *subscriber.Store
+	repoStore    store.RepoRepository
+	contentStore store.ContentRepository
+	mailer       mail.Mailer
+	ghApp        *gh.App
+	secret       string
+	apiURL       string
 }
 
-func NewService(db *sql.DB, store *subscriber.Store, mailer mail.Mailer, ghApp *gh.App, secret, apiURL string) Service {
-	return &termService{db: db, store: store, mailer: mailer, ghApp: ghApp, secret: secret, apiURL: apiURL}
+func NewService(
+	subStore *subscriber.Store,
+	repoStore store.RepoRepository,
+	contentStore store.ContentRepository,
+	mailer mail.Mailer,
+	ghApp *gh.App,
+	secret, apiURL string,
+) Service {
+	return &termService{
+		subStore:     subStore,
+		repoStore:    repoStore,
+		contentStore: contentStore,
+		mailer:       mailer,
+		ghApp:        ghApp,
+		secret:       secret,
+		apiURL:       apiURL,
+	}
 }
 
 func (s *termService) ListActiveRepos(ctx context.Context) ([]*RepoItem, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT slug, display_name FROM repos WHERE active = 1 ORDER BY slug`)
+	repos, err := s.repoStore.ListActive(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("list active repos: %w", err)
 	}
-	defer rows.Close()
-	var out []*RepoItem
-	for rows.Next() {
-		r := &RepoItem{}
-		if err := rows.Scan(&r.Slug, &r.DisplayName); err != nil {
-			return nil, err
-		}
-		out = append(out, r)
+	out := make([]*RepoItem, len(repos))
+	for i, r := range repos {
+		out[i] = &RepoItem{Slug: r.Slug, DisplayName: r.DisplayName}
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 func (s *termService) Subscribe(ctx context.Context, email string, repoWeights map[string]int) error {
 	email = strings.TrimSpace(strings.ToLower(email))
-	if err := s.store.Reactivate(ctx, email); err != nil {
+	if err := s.subStore.Reactivate(ctx, email); err != nil {
 		return err
 	}
-	if _, err := s.store.Upsert(ctx, email); err != nil {
+	if _, err := s.subStore.Upsert(ctx, email); err != nil {
 		return err
 	}
 	tok := token.Make(email, s.secret)
@@ -86,60 +97,49 @@ func (s *termService) Unsubscribe(ctx context.Context, tok string) error {
 	if err != nil {
 		return err
 	}
-	return s.store.Unsubscribe(ctx, email)
+	return s.subStore.Unsubscribe(ctx, email)
 }
 
 func (s *termService) TodayContent(ctx context.Context) (*ContentItem, error) {
-	c, err := delivery.TodayContent(ctx, s.db)
+	c, err := s.contentStore.Today(ctx)
 	if err != nil || c == nil {
 		return nil, err
 	}
-	item := &ContentItem{
-		ContentID: c.ContentID,
-		Title:     c.Title,
-		Preview:   c.Preview,
-		GitHubURL: c.GitHubURL,
-		BodyPath:  c.BodyPath,
-	}
-	if c.DiscussionURL.Valid {
-		item.DiscussionURL = c.DiscussionURL.String
-	}
-	return item, nil
+	return contentToItem(c), nil
 }
 
 func (s *termService) EnsureDiscussion(ctx context.Context, contentID string) (string, error) {
-	return delivery.EnsureDiscussion(ctx, s.ghApp, s.db, contentID)
+	return delivery.EnsureDiscussion(ctx, s.ghApp, s.contentStore, s.repoStore, contentID)
 }
 
 func (s *termService) ListContents(ctx context.Context, limit int) ([]*ContentItem, error) {
-	items, err := delivery.ListContents(ctx, s.db, limit)
+	items, err := s.contentStore.ListRecent(ctx, limit)
 	if err != nil {
 		return nil, err
 	}
 	out := make([]*ContentItem, len(items))
 	for i, c := range items {
-		out[i] = &ContentItem{
-			RepoSlug:  c.RepoSlug,
-			ContentID: c.ContentID,
-			Title:     c.Title,
-			Preview:   c.Preview,
-			GitHubURL: c.GitHubURL,
-			BodyPath:  c.BodyPath,
-		}
+		out[i] = contentToItem(c)
 	}
 	return out, nil
 }
 
 func (s *termService) GetContent(ctx context.Context, contentID string) (*ContentItem, error) {
-	c, err := delivery.GetContent(ctx, s.db, contentID)
+	c, err := s.contentStore.GetByID(ctx, contentID)
 	if err != nil || c == nil {
 		return nil, err
 	}
+	return contentToItem(c), nil
+}
+
+func contentToItem(c *store.Content) *ContentItem {
 	return &ContentItem{
-		ContentID: c.ContentID,
-		Title:     c.Title,
-		Preview:   c.Preview,
-		GitHubURL: c.GitHubURL,
-		BodyPath:  c.BodyPath,
-	}, nil
+		RepoSlug:      c.RepoSlug,
+		ContentID:     c.ContentID,
+		Title:         c.Title,
+		Preview:       c.Preview,
+		GitHubURL:     c.GitHubURL,
+		BodyPath:      c.BodyPath,
+		DiscussionURL: c.DiscussionURL,
+	}
 }

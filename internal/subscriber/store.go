@@ -55,11 +55,14 @@ func (s *Store) Confirm(ctx context.Context, email string, repoWeights map[strin
 		return fmt.Errorf("get subscriber: %w", err)
 	}
 
+	if _, err := tx.ExecContext(ctx, `DELETE FROM subscriptions WHERE subscriber_id = ?`, id); err != nil {
+		return fmt.Errorf("clear subscriptions: %w", err)
+	}
+
 	if len(repoWeights) > 0 {
 		for slug, weight := range repoWeights {
 			if _, err := tx.ExecContext(ctx,
-				`INSERT INTO subscriptions (subscriber_id, repo_slug, weight) VALUES (?, ?, ?)
-				 ON CONFLICT(subscriber_id, repo_slug) DO UPDATE SET weight = excluded.weight`,
+				`INSERT INTO subscriptions (subscriber_id, repo_slug, weight) VALUES (?, ?, ?)`,
 				id, slug, weight,
 			); err != nil {
 				return fmt.Errorf("create subscription for %s: %w", slug, err)
@@ -69,7 +72,6 @@ func (s *Store) Confirm(ctx context.Context, email string, repoWeights map[strin
 		_, err = tx.ExecContext(ctx, `
 			INSERT INTO subscriptions (subscriber_id, repo_slug, weight)
 			SELECT ?, slug, 3 FROM repos WHERE active = 1
-			ON CONFLICT DO NOTHING
 		`, id)
 		if err != nil {
 			return fmt.Errorf("create subscriptions: %w", err)

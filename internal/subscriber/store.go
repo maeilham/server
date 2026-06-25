@@ -34,8 +34,8 @@ func (s *Store) Upsert(ctx context.Context, email string) (int64, error) {
 }
 
 // Confirm sets confirmed_at and creates subscriptions.
-// If repoSlugs is non-empty, subscribes only to those repos; otherwise subscribes to all active repos.
-func (s *Store) Confirm(ctx context.Context, email string, repoSlugs []string) error {
+// repoWeights maps repo slug to weight. If empty, subscribes to all active repos with default weight 3.
+func (s *Store) Confirm(ctx context.Context, email string, repoWeights map[string]int) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -55,19 +55,20 @@ func (s *Store) Confirm(ctx context.Context, email string, repoSlugs []string) e
 		return fmt.Errorf("get subscriber: %w", err)
 	}
 
-	if len(repoSlugs) > 0 {
-		for _, slug := range repoSlugs {
+	if len(repoWeights) > 0 {
+		for slug, weight := range repoWeights {
 			if _, err := tx.ExecContext(ctx,
-				`INSERT INTO subscriptions (subscriber_id, repo_slug) VALUES (?, ?) ON CONFLICT DO NOTHING`,
-				id, slug,
+				`INSERT INTO subscriptions (subscriber_id, repo_slug, weight) VALUES (?, ?, ?)
+				 ON CONFLICT(subscriber_id, repo_slug) DO UPDATE SET weight = excluded.weight`,
+				id, slug, weight,
 			); err != nil {
 				return fmt.Errorf("create subscription for %s: %w", slug, err)
 			}
 		}
 	} else {
 		_, err = tx.ExecContext(ctx, `
-			INSERT INTO subscriptions (subscriber_id, repo_slug)
-			SELECT ?, slug FROM repos WHERE active = 1
+			INSERT INTO subscriptions (subscriber_id, repo_slug, weight)
+			SELECT ?, slug, 3 FROM repos WHERE active = 1
 			ON CONFLICT DO NOTHING
 		`, id)
 		if err != nil {

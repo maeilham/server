@@ -187,6 +187,16 @@ func cmdSubscribe(rw io.ReadWriter, svc Service, parts []string) {
 		return
 	}
 
+	var repoWeights map[string]int
+	if len(selected) == 1 {
+		repoWeights = map[string]int{selected[0]: 3}
+	} else {
+		repoWeights = pickWeights(rw, selected)
+		if repoWeights == nil {
+			return
+		}
+	}
+
 	var email string
 	if len(parts) >= 2 {
 		email = strings.TrimSpace(strings.ToLower(parts[1]))
@@ -198,7 +208,7 @@ func cmdSubscribe(rw io.ReadWriter, svc Service, parts []string) {
 	if email == "" {
 		return
 	}
-	if err := svc.Subscribe(context.Background(), email, selected); err != nil {
+	if err := svc.Subscribe(context.Background(), email, repoWeights); err != nil {
 		fmt.Fprint(rw, sprint(fmt.Sprintf("§red오류: %s§r\n\n", err)))
 		return
 	}
@@ -269,6 +279,87 @@ func pickRepos(rw io.ReadWriter, repos []*RepoItem) []string {
 				case 'B':
 					if cursor < len(repos)-1 {
 						cursor++
+					}
+				}
+			}
+		}
+		render()
+	}
+}
+
+var weightLevels = []struct {
+	label  string
+	weight int
+}{
+	{"적게", 1},
+	{"보통", 3},
+	{"더 자주", 5},
+}
+
+func pickWeights(rw io.ReadWriter, slugs []string) map[string]int {
+	levels := make([]int, len(slugs)) // 기본값 index 1 = "보통"
+	for i := range levels {
+		levels[i] = 1
+	}
+	cursor := 0
+	firstRender := true
+
+	render := func() {
+		if !firstRender {
+			fmt.Fprintf(rw, "\x1b[%dA", len(slugs)+1)
+		}
+		firstRender = false
+		fmt.Fprint(rw, sprint("\r얼마나 자주 받고 싶으신가요? §dim(↑↓ 이동, ◀▶ 조절, Enter 확인)§r\x1b[K\r\n"))
+		for i, slug := range slugs {
+			arrow := "  "
+			if i == cursor {
+				arrow = "▶ "
+			}
+			level := weightLevels[levels[i]]
+			fmt.Fprint(rw, sprint(fmt.Sprintf("\r  %s§bold%-20s§r ◀ §green%s§r ▶\x1b[K\r\n", arrow, slug, level.label)))
+		}
+	}
+
+	render()
+
+	b := make([]byte, 1)
+	for {
+		n, err := rw.Read(b)
+		if err != nil || n == 0 {
+			return nil
+		}
+		ch := b[0]
+		switch {
+		case ch == '\r' || ch == '\n':
+			fmt.Fprint(rw, "\r\n")
+			out := make(map[string]int, len(slugs))
+			for i, slug := range slugs {
+				out[slug] = weightLevels[levels[i]].weight
+			}
+			return out
+		case ch == 3:
+			fmt.Fprint(rw, "\r\n")
+			return nil
+		case ch == '\x1b':
+			seq := make([]byte, 2)
+			rw.Read(seq)
+			if seq[0] == '[' {
+				switch seq[1] {
+				case 'A':
+					if cursor > 0 {
+						cursor--
+					}
+				case 'B':
+					if cursor < len(slugs)-1 {
+						cursor++
+					}
+				case 'D':
+					if levels[cursor] > 0 {
+						levels[cursor]--
+					}
+				case 'C':
+					if levels[cursor] < len(weightLevels)-1 {
+						levels[cursor]++
 					}
 				}
 			}

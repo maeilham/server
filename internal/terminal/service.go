@@ -20,7 +20,7 @@ type RepoItem struct {
 
 type Service interface {
 	ListActiveRepos(ctx context.Context) ([]*RepoItem, error)
-	Subscribe(ctx context.Context, email string, repoSlugs []string) error
+	Subscribe(ctx context.Context, email string, repoWeights map[string]int) error
 	Unsubscribe(ctx context.Context, tok string) error
 	TodayContent(ctx context.Context) (*ContentItem, error)
 	ListContents(ctx context.Context, limit int) ([]*ContentItem, error)
@@ -58,7 +58,7 @@ func (s *termService) ListActiveRepos(ctx context.Context) ([]*RepoItem, error) 
 	return out, rows.Err()
 }
 
-func (s *termService) Subscribe(ctx context.Context, email string, repoSlugs []string) error {
+func (s *termService) Subscribe(ctx context.Context, email string, repoWeights map[string]int) error {
 	email = strings.TrimSpace(strings.ToLower(email))
 	if err := s.store.Reactivate(ctx, email); err != nil {
 		return err
@@ -67,8 +67,11 @@ func (s *termService) Subscribe(ctx context.Context, email string, repoSlugs []s
 		return err
 	}
 	tok := token.Make(email, s.secret)
-	reposParam := strings.Join(repoSlugs, ",")
-	confirmURL := fmt.Sprintf("%s/api/confirm?token=%s&repos=%s", s.apiURL, tok, reposParam)
+	var parts []string
+	for slug, w := range repoWeights {
+		parts = append(parts, fmt.Sprintf("%s:%d", slug, w))
+	}
+	confirmURL := fmt.Sprintf("%s/api/confirm?token=%s&repos=%s", s.apiURL, tok, strings.Join(parts, ","))
 	subject, text, html := mail.RenderConfirm(confirmURL)
 	return s.mailer.Send(ctx, mail.Message{
 		To:       email,

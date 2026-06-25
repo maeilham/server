@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/mail"
+	"strconv"
 	"strings"
 
 	imail "github.com/maeilham/server/internal/mail"
@@ -76,15 +77,8 @@ func (h *subscribeHandler) handleConfirm(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	var repoSlugs []string
-	if repos := r.URL.Query().Get("repos"); repos != "" {
-		for _, s := range strings.Split(repos, ",") {
-			if s = strings.TrimSpace(s); s != "" {
-				repoSlugs = append(repoSlugs, s)
-			}
-		}
-	}
-	if err := h.store.Confirm(r.Context(), email, repoSlugs); err != nil {
+	repoWeights := parseRepoWeights(r.URL.Query().Get("repos"))
+	if err := h.store.Confirm(r.Context(), email, repoWeights); err != nil {
 		h.logger.Warn("confirm: db error", "err", err, "email", email)
 		http.Redirect(w, r, h.baseURL+"/?status=invalid", http.StatusSeeOther)
 		return
@@ -92,6 +86,28 @@ func (h *subscribeHandler) handleConfirm(w http.ResponseWriter, r *http.Request)
 
 	h.logger.Info("confirm: subscription confirmed", "email", email)
 	http.Redirect(w, r, h.baseURL+"/?status=confirmed", http.StatusSeeOther)
+}
+
+// parseRepoWeights parses "slug:weight,slug:weight" into a map.
+// e.g. "be-interview:5,til:3"
+func parseRepoWeights(raw string) map[string]int {
+	if raw == "" {
+		return nil
+	}
+	out := make(map[string]int)
+	for _, part := range strings.Split(raw, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		slug, wStr, _ := strings.Cut(part, ":")
+		w := 3
+		if n, err := strconv.Atoi(wStr); err == nil {
+			w = n
+		}
+		out[slug] = w
+	}
+	return out
 }
 
 func truncate(s string, n int) string {

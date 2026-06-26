@@ -8,7 +8,6 @@ import (
 
 	dbpkg "github.com/maeilham/server/internal/db"
 	"github.com/maeilham/server/internal/store"
-	"github.com/maeilham/server/internal/subscriber"
 )
 
 func newTestDB(t *testing.T) *sql.DB {
@@ -64,8 +63,8 @@ func subscribe(t *testing.T, db *sql.DB, subID int64, repoSlug string, weight in
 		subID, repoSlug, weight)
 }
 
-func newStores(db *sql.DB) (*subscriber.Store, store.ContentRepository) {
-	return subscriber.NewStore(db), store.NewContentStore(db)
+func newStores(db *sql.DB) (store.SubscriberRepository, store.ContentRepository) {
+	return store.NewSubscriberStore(db), store.NewContentStore(db)
 }
 
 // ---------------- TodayContentForRepo ----------------

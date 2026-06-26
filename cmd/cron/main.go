@@ -25,7 +25,6 @@ import (
 	"github.com/maeilham/server/internal/pkg/config"
 	"github.com/maeilham/server/internal/pkg/logger"
 	"github.com/maeilham/server/internal/store"
-	"github.com/maeilham/server/internal/subscriber"
 )
 
 func main() {
@@ -57,7 +56,7 @@ func main() {
 	repoStore := store.NewRepoStore(conn)
 	contentStore := store.NewContentStore(conn)
 	logStore := store.NewDeliveryLogStore(conn)
-	subStore := subscriber.NewStore(conn)
+	subRepo := store.NewSubscriberStore(conn)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -79,7 +78,7 @@ func main() {
 			os.Exit(1)
 		}
 	case "send-daily":
-		if err := runSendDaily(ctx, logger, subStore, repoStore, contentStore, logStore, cfg, args); err != nil {
+		if err := runSendDaily(ctx, logger, subRepo, repoStore, contentStore, logStore, cfg, args); err != nil {
 			logger.Error("send-daily failed", "err", err)
 			os.Exit(1)
 		}
@@ -102,7 +101,7 @@ func main() {
 func runSendDaily(
 	ctx context.Context,
 	logger *slog.Logger,
-	subStore *subscriber.Store,
+	subRepo store.SubscriberRepository,
 	repoStore store.RepoRepository,
 	contentStore store.ContentRepository,
 	logStore store.DeliveryLogRepository,
@@ -144,7 +143,7 @@ func runSendDaily(
 		APIURL:       cfg.APIURL,
 		Secret:       cfg.Secret,
 		GitHubApp:    ghApp,
-		SubStore:     subStore,
+		SubRepo:      subRepo,
 		RepoStore:    repoStore,
 		ContentStore: contentStore,
 		LogStore:     logStore,

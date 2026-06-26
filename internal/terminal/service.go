@@ -3,12 +3,9 @@ package terminal
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	"github.com/maeilham/server/internal/delivery"
 	gh "github.com/maeilham/server/internal/github"
-	"github.com/maeilham/server/internal/mail"
-	"github.com/maeilham/server/internal/pkg/token"
 	"github.com/maeilham/server/internal/store"
 	"github.com/maeilham/server/internal/subscriber"
 )
@@ -29,31 +26,23 @@ type Service interface {
 }
 
 type termService struct {
-	subStore     *subscriber.Store
+	subSvc       *subscriber.SubscriberService
 	repoStore    store.RepoRepository
 	contentStore store.ContentRepository
-	mailer       mail.Mailer
 	ghApp        *gh.App
-	secret       string
-	apiURL       string
 }
 
 func NewService(
-	subStore *subscriber.Store,
+	subSvc *subscriber.SubscriberService,
 	repoStore store.RepoRepository,
 	contentStore store.ContentRepository,
-	mailer mail.Mailer,
 	ghApp *gh.App,
-	secret, apiURL string,
 ) Service {
 	return &termService{
-		subStore:     subStore,
+		subSvc:       subSvc,
 		repoStore:    repoStore,
 		contentStore: contentStore,
-		mailer:       mailer,
 		ghApp:        ghApp,
-		secret:       secret,
-		apiURL:       apiURL,
 	}
 }
 
@@ -70,34 +59,11 @@ func (s *termService) ListActiveRepos(ctx context.Context) ([]*RepoItem, error) 
 }
 
 func (s *termService) Subscribe(ctx context.Context, email string, repoWeights map[string]int) error {
-	email = strings.TrimSpace(strings.ToLower(email))
-	if err := s.subStore.Reactivate(ctx, email); err != nil {
-		return err
-	}
-	if _, err := s.subStore.Upsert(ctx, email); err != nil {
-		return err
-	}
-	tok := token.Make(email, s.secret)
-	var parts []string
-	for slug, w := range repoWeights {
-		parts = append(parts, fmt.Sprintf("%s:%d", slug, w))
-	}
-	confirmURL := fmt.Sprintf("%s/api/confirm?token=%s&repos=%s", s.apiURL, tok, strings.Join(parts, ","))
-	subject, text, html := mail.RenderConfirm(confirmURL)
-	return s.mailer.Send(ctx, mail.Message{
-		To:       email,
-		Subject:  subject,
-		TextBody: text,
-		HTMLBody:  html,
-	})
+	return s.subSvc.Subscribe(ctx, email, repoWeights)
 }
 
 func (s *termService) Unsubscribe(ctx context.Context, tok string) error {
-	email, err := token.Verify(tok, s.secret)
-	if err != nil {
-		return err
-	}
-	return s.subStore.Unsubscribe(ctx, email)
+	return s.subSvc.Unsubscribe(ctx, tok)
 }
 
 func (s *termService) TodayContent(ctx context.Context) (*ContentItem, error) {

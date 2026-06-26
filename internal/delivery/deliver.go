@@ -13,7 +13,6 @@ import (
 	gh "github.com/maeilham/server/internal/github"
 	"github.com/maeilham/server/internal/mail"
 	"github.com/maeilham/server/internal/store"
-	"github.com/maeilham/server/internal/subscriber"
 )
 
 // EnsureDiscussion returns the Discussion URL for contentID, creating one if it doesn't exist yet.
@@ -61,7 +60,7 @@ type DailySendOptions struct {
 	Secret    string    // HMAC 서명 키 (unsubscribe 토큰 생성)
 	GitHubApp *gh.App
 
-	SubStore     *subscriber.Store
+	SubRepo      store.SubscriberRepository
 	RepoStore    store.RepoRepository
 	ContentStore store.ContentRepository
 	LogStore     store.DeliveryLogRepository
@@ -79,7 +78,7 @@ func DailySend(
 ) (*DailySendStats, error) {
 	stats := &DailySendStats{DryRun: opts.DryRun}
 
-	subs, err := opts.SubStore.ListActive(ctx)
+	subs, err := opts.SubRepo.ListActive(ctx)
 	if err != nil {
 		return stats, fmt.Errorf("load subscribers: %w", err)
 	}
@@ -105,7 +104,7 @@ func DailySend(
 			continue
 		}
 
-		content, err := PickForSubscriber(ctx, opts.SubStore, opts.ContentStore, sub.ID, opts.Day)
+		content, err := PickForSubscriber(ctx, opts.SubRepo, opts.ContentStore, sub.ID, opts.Day)
 		if err != nil {
 			l.Error("pick", "err", err)
 			stats.Errors++

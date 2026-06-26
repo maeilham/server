@@ -40,7 +40,8 @@ func main() {
 	log.Info("db ready", "dsn", cfg.DatabaseURL)
 
 	mailer := mail.New(log, cfg.ResendAPIKey, cfg.MailFromEmail, cfg.MailFromName)
-	subStore := subscriber.NewStore(conn)
+	subRepo := store.NewSubscriberStore(conn)
+	subSvc := subscriber.NewSubscriberService(subRepo, mailer, cfg.Secret, cfg.APIURL)
 	repoStore := store.NewRepoStore(conn)
 	contentStore := store.NewContentStore(conn)
 
@@ -53,7 +54,7 @@ func main() {
 		}
 	}
 
-	termSvc := terminal.NewService(subStore, repoStore, contentStore, mailer, ghApp, cfg.Secret, cfg.APIURL)
+	termSvc := terminal.NewService(subSvc, repoStore, contentStore, ghApp)
 	termHandler := terminal.NewHandler(termSvc)
 
 	// SSH 서버 시작
@@ -72,11 +73,8 @@ func main() {
 		Addr: cfg.HTTPAddr,
 		Handler: httpsrv.NewRouter(httpsrv.Deps{
 			Logger:  log,
-			Store:   subStore,
-			Mailer:  mailer,
+			SubSvc:  subSvc,
 			BaseURL: cfg.BaseURL,
-			APIURL:  cfg.APIURL,
-			Secret:  cfg.Secret,
 			SSHAddr: cfg.SSHAddr,
 		}),
 		ReadHeaderTimeout: 10 * time.Second,

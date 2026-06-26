@@ -7,18 +7,14 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	chimw "github.com/go-chi/chi/v5/middleware"
-	"github.com/maeilham/server/internal/mail"
 	"github.com/maeilham/server/internal/subscriber"
 	"github.com/maeilham/server/internal/terminal"
 )
 
 type Deps struct {
 	Logger  *slog.Logger
-	Store   *subscriber.Store
-	Mailer  mail.Mailer
+	SubSvc  *subscriber.SubscriberService
 	BaseURL string
-	APIURL  string
-	Secret  string
 	SSHAddr string // SSH 서버 주소 (WebSocket 브리지용)
 }
 
@@ -36,11 +32,8 @@ func NewRouter(deps Deps) http.Handler {
 	})
 
 	sub := &subscribeHandler{
-		store:   deps.Store,
-		mailer:  deps.Mailer,
+		subSvc:  deps.SubSvc,
 		baseURL: deps.BaseURL,
-		apiURL:  deps.APIURL,
-		secret:  deps.Secret,
 		logger:  deps.Logger,
 	}
 	r.Post("/api/subscribe", sub.handleSubscribe)

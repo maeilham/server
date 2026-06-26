@@ -2,24 +2,18 @@ package http
 
 import (
 	"encoding/json"
-	"fmt"
 	"log/slog"
 	"net/http"
 	"net/mail"
 	"strconv"
 	"strings"
 
-	imail "github.com/maeilham/server/internal/mail"
-	"github.com/maeilham/server/internal/pkg/token"
 	"github.com/maeilham/server/internal/subscriber"
 )
 
 type subscribeHandler struct {
-	store   *subscriber.Store
-	mailer  imail.Mailer
+	subSvc  *subscriber.SubscriberService
 	baseURL string // 웹 프론트 URL (리다이렉트용)
-	apiURL  string // API 서버 URL (메일 링크용)
-	secret  string
 	logger  *slog.Logger
 }
 
@@ -38,30 +32,8 @@ func (h *subscribeHandler) handleSubscribe(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// 재구독 허용: 이전에 해지했어도 다시 구독 가능
-	if err := h.store.Reactivate(r.Context(), req.Email); err != nil {
+	if err := h.subSvc.Subscribe(r.Context(), req.Email, nil); err != nil {
 		jsonError(w, "서버 오류", http.StatusInternalServerError)
-		return
-	}
-
-	if _, err := h.store.Upsert(r.Context(), req.Email); err != nil {
-		jsonError(w, "서버 오류", http.StatusInternalServerError)
-		return
-	}
-
-	tok := token.Make(req.Email, h.secret)
-	confirmURL := fmt.Sprintf("%s/api/confirm?token=%s", h.apiURL, tok)
-
-	subject, text, html := imail.RenderConfirm(confirmURL)
-	msg := imail.Message{
-		To:       req.Email,
-		Subject:  subject,
-		TextBody: text,
-		HTMLBody:  html,
-	}
-
-	if err := h.mailer.Send(r.Context(), msg); err != nil {
-		jsonError(w, "메일 발송 실패", http.StatusInternalServerError)
 		return
 	}
 
@@ -70,22 +42,24 @@ func (h *subscribeHandler) handleSubscribe(w http.ResponseWriter, r *http.Reques
 
 func (h *subscribeHandler) handleConfirm(w http.ResponseWriter, r *http.Request) {
 	tok := r.URL.Query().Get("token")
-	email, err := token.Verify(tok, h.secret)
-	if err != nil {
-		h.logger.Warn("confirm: token verification failed", "err", err, "token_prefix", truncate(tok, 16))
-		http.Redirect(w, r, h.baseURL+"/?status=invalid", http.StatusSeeOther)
-		return
-	}
-
 	repoWeights := parseRepoWeights(r.URL.Query().Get("repos"))
-	if err := h.store.Confirm(r.Context(), email, repoWeights); err != nil {
-		h.logger.Warn("confirm: db error", "err", err, "email", email)
+
+	if err := h.subSvc.Confirm(r.Context(), tok, repoWeights); err != nil {
+		h.logger.Warn("confirm failed", "err", err, "token_prefix", truncate(tok, 16))
 		http.Redirect(w, r, h.baseURL+"/?status=invalid", http.StatusSeeOther)
 		return
 	}
 
-	h.logger.Info("confirm: subscription confirmed", "email", email)
 	http.Redirect(w, r, h.baseURL+"/?status=confirmed", http.StatusSeeOther)
+}
+
+func (h *subscribeHandler) handleUnsubscribe(w http.ResponseWriter, r *http.Request) {
+	tok := r.URL.Query().Get("token")
+	if err := h.subSvc.Unsubscribe(r.Context(), tok); err != nil {
+		jsonError(w, "링크가 유효하지 않습니다", http.StatusBadRequest)
+		return
+	}
+	jsonOK(w, map[string]string{"status": "ok"})
 }
 
 // parseRepoWeights parses "slug:weight,slug:weight" into a map.
@@ -115,22 +89,6 @@ func truncate(s string, n int) string {
 		return s
 	}
 	return s[:n] + "..."
-}
-
-func (h *subscribeHandler) handleUnsubscribe(w http.ResponseWriter, r *http.Request) {
-	tok := r.URL.Query().Get("token")
-	email, err := token.Verify(tok, h.secret)
-	if err != nil {
-		jsonError(w, "링크가 유효하지 않습니다", http.StatusBadRequest)
-		return
-	}
-
-	if err := h.store.Unsubscribe(r.Context(), email); err != nil {
-		jsonError(w, "서버 오류", http.StatusInternalServerError)
-		return
-	}
-
-	jsonOK(w, map[string]string{"status": "ok"})
 }
 
 // ── Response helpers ─────────────────────────────────────────────────────────

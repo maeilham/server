@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"github.com/maeilham/server/internal/store"
-	"github.com/maeilham/server/internal/subscriber"
 )
 
 // PickForSubscriber chooses which today's content to deliver to subscriberID.
@@ -31,12 +30,12 @@ import (
 // same day return the same content. This makes retries idempotent.
 func PickForSubscriber(
 	ctx context.Context,
-	subStore *subscriber.Store,
+	subRepo store.SubscriberRepository,
 	contentStore store.ContentRepository,
 	subscriberID int64,
 	today time.Time,
 ) (*store.Content, error) {
-	active, err := subStore.IsActive(ctx, subscriberID)
+	active, err := subRepo.IsActive(ctx, subscriberID)
 	if err != nil {
 		return nil, err
 	}
@@ -44,7 +43,7 @@ func PickForSubscriber(
 		return nil, nil
 	}
 
-	subs, err := subStore.LoadSubscriptions(ctx, subscriberID)
+	subs, err := subRepo.LoadSubscriptions(ctx, subscriberID)
 	if err != nil {
 		return nil, err
 	}

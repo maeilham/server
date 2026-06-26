@@ -11,7 +11,6 @@ import (
 
 	"github.com/maeilham/server/internal/mail"
 	"github.com/maeilham/server/internal/store"
-	"github.com/maeilham/server/internal/subscriber"
 )
 
 type mockMailer struct {
@@ -43,7 +42,7 @@ func TestDailySend_HappyPath(t *testing.T) {
 	insertContent(t, db, "be", "0002")
 	subscribe(t, db, id, "be", 3)
 
-	ss := subscriber.NewStore(db)
+	ss := store.NewSubscriberStore(db)
 	cs := store.NewContentStore(db)
 	ls := store.NewDeliveryLogStore(db)
 	rs := store.NewRepoStore(db)
@@ -53,7 +52,7 @@ func TestDailySend_HappyPath(t *testing.T) {
 	stats, err := DailySend(context.Background(), discardLogger(), mockM, DailySendOptions{
 		Day:          day,
 		BaseURL:      "https://maeilham.kr",
-		SubStore:     ss,
+		SubRepo:      ss,
 		RepoStore:    rs,
 		ContentStore: cs,
 		LogStore:     ls,
@@ -86,13 +85,13 @@ func TestDailySend_IdempotentSameDay(t *testing.T) {
 	insertContent(t, db, "be", "0001")
 	subscribe(t, db, id, "be", 3)
 
-	ss := subscriber.NewStore(db)
+	ss := store.NewSubscriberStore(db)
 	cs := store.NewContentStore(db)
 	ls := store.NewDeliveryLogStore(db)
 	rs := store.NewRepoStore(db)
 	mockM := &mockMailer{}
 	day := time.Date(2026, 5, 27, 0, 0, 0, 0, time.UTC)
-	opts := DailySendOptions{Day: day, SubStore: ss, RepoStore: rs, ContentStore: cs, LogStore: ls}
+	opts := DailySendOptions{Day: day, SubRepo: ss, RepoStore: rs, ContentStore: cs, LogStore: ls}
 
 	_, _ = DailySend(context.Background(), discardLogger(), mockM, opts)
 	stats2, _ := DailySend(context.Background(), discardLogger(), mockM, opts)
@@ -115,7 +114,7 @@ func TestDailySend_DryRunNoSideEffects(t *testing.T) {
 	insertContent(t, db, "be", "0001")
 	subscribe(t, db, id, "be", 3)
 
-	ss := subscriber.NewStore(db)
+	ss := store.NewSubscriberStore(db)
 	cs := store.NewContentStore(db)
 	ls := store.NewDeliveryLogStore(db)
 	rs := store.NewRepoStore(db)
@@ -125,7 +124,7 @@ func TestDailySend_DryRunNoSideEffects(t *testing.T) {
 	stats, err := DailySend(context.Background(), discardLogger(), mockM, DailySendOptions{
 		Day:          day,
 		DryRun:       true,
-		SubStore:     ss,
+		SubRepo:      ss,
 		RepoStore:    rs,
 		ContentStore: cs,
 		LogStore:     ls,
@@ -159,7 +158,7 @@ func TestDailySend_AdvanceProgressesContent(t *testing.T) {
 	insertContent(t, db, "be", "0002")
 	subscribe(t, db, id, "be", 3)
 
-	ss := subscriber.NewStore(db)
+	ss := store.NewSubscriberStore(db)
 	cs := store.NewContentStore(db)
 	ls := store.NewDeliveryLogStore(db)
 	rs := store.NewRepoStore(db)
@@ -167,8 +166,8 @@ func TestDailySend_AdvanceProgressesContent(t *testing.T) {
 	day1 := time.Date(2026, 5, 27, 0, 0, 0, 0, time.UTC)
 	day2 := day1.AddDate(0, 0, 1)
 
-	_, _ = DailySend(context.Background(), discardLogger(), mockM, DailySendOptions{Day: day1, SubStore: ss, RepoStore: rs, ContentStore: cs, LogStore: ls})
-	_, _ = DailySend(context.Background(), discardLogger(), mockM, DailySendOptions{Day: day2, SubStore: ss, RepoStore: rs, ContentStore: cs, LogStore: ls})
+	_, _ = DailySend(context.Background(), discardLogger(), mockM, DailySendOptions{Day: day1, SubRepo: ss, RepoStore: rs, ContentStore: cs, LogStore: ls})
+	_, _ = DailySend(context.Background(), discardLogger(), mockM, DailySendOptions{Day: day2, SubRepo: ss, RepoStore: rs, ContentStore: cs, LogStore: ls})
 
 	if len(mockM.messages) != 2 {
 		t.Fatalf("expected 2 messages over 2 days; got %d", len(mockM.messages))
@@ -186,13 +185,13 @@ func TestDailySend_AdvanceIsIdempotent(t *testing.T) {
 	insertContent(t, db, "be", "0002")
 	subscribe(t, db, id, "be", 3)
 
-	ss := subscriber.NewStore(db)
+	ss := store.NewSubscriberStore(db)
 	cs := store.NewContentStore(db)
 	ls := store.NewDeliveryLogStore(db)
 	rs := store.NewRepoStore(db)
 	mockM := &mockMailer{}
 	day := time.Date(2026, 5, 27, 0, 0, 0, 0, time.UTC)
-	opts := DailySendOptions{Day: day, SubStore: ss, RepoStore: rs, ContentStore: cs, LogStore: ls}
+	opts := DailySendOptions{Day: day, SubRepo: ss, RepoStore: rs, ContentStore: cs, LogStore: ls}
 
 	_, _ = DailySend(context.Background(), discardLogger(), mockM, opts)
 	_, _ = DailySend(context.Background(), discardLogger(), mockM, opts)
@@ -218,14 +217,14 @@ func TestDailySend_SkipsPausedAndNoContent(t *testing.T) {
 	subscribe(t, db, idActive, "be", 3)
 	subscribe(t, db, idNoContent, "empty", 3)
 
-	ss := subscriber.NewStore(db)
+	ss := store.NewSubscriberStore(db)
 	cs := store.NewContentStore(db)
 	ls := store.NewDeliveryLogStore(db)
 	rs := store.NewRepoStore(db)
 	mockM := &mockMailer{}
 	stats, _ := DailySend(context.Background(), discardLogger(), mockM, DailySendOptions{
 		Day:          time.Now().UTC(),
-		SubStore:     ss,
+		SubRepo:      ss,
 		RepoStore:    rs,
 		ContentStore: cs,
 		LogStore:     ls,

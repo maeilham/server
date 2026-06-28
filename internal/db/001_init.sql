@@ -36,8 +36,6 @@ CREATE TABLE contents (
     title          TEXT    NOT NULL,
     preview        TEXT    NOT NULL,
     tags           TEXT,                          -- JSON array
-    source_url     TEXT,                          -- frontmatter.source.url
-    source_author  TEXT,
     body_path      TEXT    NOT NULL,             -- 'content/0001-scale-up-vs-scale-out.md'
     github_sha     TEXT,                          -- GitHub blob sha (변경 감지용)
     sent_at        TIMESTAMP,                    -- 마지막 발송 시각

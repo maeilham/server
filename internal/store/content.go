@@ -15,8 +15,6 @@ type Content struct {
 	Title            string
 	Preview          string
 	Tags             string // JSON array
-	SourceURL        string
-	SourceAuthor     string
 	BodyPath         string
 	GithubSHA        string
 	DiscussionURL    string
@@ -61,10 +59,9 @@ func (s *sqlContentStore) Upsert(ctx context.Context, c *Content) (bool, error) 
 	case err == sql.ErrNoRows:
 		_, err = s.db.ExecContext(ctx, `
 			INSERT INTO contents
-			  (repo_slug, content_id, title, preview, tags, source_url, source_author, body_path, github_sha)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			c.RepoSlug, c.ContentID, c.Title, c.Preview, c.Tags,
-			nullableStr(c.SourceURL), nullableStr(c.SourceAuthor), c.BodyPath, c.GithubSHA,
+			  (repo_slug, content_id, title, preview, tags, body_path, github_sha)
+			VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			c.RepoSlug, c.ContentID, c.Title, c.Preview, c.Tags, c.BodyPath, c.GithubSHA,
 		)
 		if err != nil {
 			return false, fmt.Errorf("insert content %s/%s: %w", c.RepoSlug, c.ContentID, err)
@@ -79,15 +76,12 @@ func (s *sqlContentStore) Upsert(ctx context.Context, c *Content) (bool, error) 
 		   SET title         = ?,
 		       preview       = ?,
 		       tags          = ?,
-		       source_url    = ?,
-		       source_author = ?,
 		       body_path     = ?,
 		       github_sha    = ?,
 		       deleted_at    = NULL,
 		       synced_at     = CURRENT_TIMESTAMP
 		 WHERE repo_slug = ? AND content_id = ?`,
-		c.Title, c.Preview, c.Tags, nullableStr(c.SourceURL), nullableStr(c.SourceAuthor),
-		c.BodyPath, c.GithubSHA, c.RepoSlug, c.ContentID,
+		c.Title, c.Preview, c.Tags, c.BodyPath, c.GithubSHA, c.RepoSlug, c.ContentID,
 	)
 	return false, err
 }
@@ -236,11 +230,4 @@ func (s *sqlContentStore) SaveDiscussionURL(ctx context.Context, repoSlug, conte
 		url, nodeID, repoSlug, contentID,
 	)
 	return err
-}
-
-func nullableStr(s string) any {
-	if s == "" {
-		return nil
-	}
-	return s
 }

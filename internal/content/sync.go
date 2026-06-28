@@ -7,11 +7,11 @@ import (
 	"log/slog"
 	"path"
 	"regexp"
-	"strings"
 
 	gh "github.com/maeilham/server/internal/github"
 	"github.com/maeilham/server/internal/store"
 )
+
 
 type SyncStats struct {
 	Scanned  int
@@ -98,17 +98,13 @@ func Sync(
 		}
 
 		c := &store.Content{
-			RepoSlug:     repoSlug,
-			ContentID:    contentID,
-			Title:        parsed.Frontmatter.Title,
-			Preview:      parsed.Frontmatter.Preview,
-			Tags:         tagsJSON,
-			BodyPath:     e.Path,
-			GithubSHA:    e.SHA,
-		}
-		if parsed.Frontmatter.Source != nil {
-			c.SourceURL = strings.TrimSpace(parsed.Frontmatter.Source.URL)
-			c.SourceAuthor = strings.TrimSpace(parsed.Frontmatter.Source.Author)
+			RepoSlug:  repoSlug,
+			ContentID: contentID,
+			Title:     parsed.Frontmatter.Title,
+			Preview:   parsed.Frontmatter.Preview,
+			Tags:      tagsJSON,
+			BodyPath:  e.Path,
+			GithubSHA: e.SHA,
 		}
 
 		inserted, err := contentStore.Upsert(ctx, c)

@@ -28,35 +28,8 @@ tags: [infra, scaling]
 	if len(p.Frontmatter.Tags) != 2 || p.Frontmatter.Tags[0] != "infra" || p.Frontmatter.Tags[1] != "scaling" {
 		t.Errorf("tags mismatch: %v", p.Frontmatter.Tags)
 	}
-	if p.Frontmatter.Source != nil {
-		t.Errorf("expected nil source, got %+v", p.Frontmatter.Source)
-	}
 	if !strings.HasPrefix(p.Body, "## 질문") {
 		t.Errorf("body should start with ## 질문, got %q", p.Body)
-	}
-}
-
-func TestParse_WithSource(t *testing.T) {
-	raw := []byte(`---
-title: "T"
-preview: "P"
-source:
-  url: "https://example.com/x"
-  author: "anon"
----
-body`)
-	p, err := Parse(raw)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if p.Frontmatter.Source == nil {
-		t.Fatal("source should not be nil")
-	}
-	if p.Frontmatter.Source.URL != "https://example.com/x" {
-		t.Errorf("source.url mismatch: %q", p.Frontmatter.Source.URL)
-	}
-	if p.Frontmatter.Source.Author != "anon" {
-		t.Errorf("source.author mismatch: %q", p.Frontmatter.Source.Author)
 	}
 }
 

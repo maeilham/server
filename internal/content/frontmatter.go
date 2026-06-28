@@ -8,16 +8,10 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-type Source struct {
-	URL    string `yaml:"url"`
-	Author string `yaml:"author"`
-}
-
 type Frontmatter struct {
 	Title   string   `yaml:"title"`
 	Preview string   `yaml:"preview"`
 	Tags    []string `yaml:"tags"`
-	Source  *Source  `yaml:"source,omitempty"`
 }
 
 type ParsedContent struct {

@@ -33,6 +33,7 @@ go.work.sum
 
 data/
 bin/
+/maeilham
 
 # macOS
 .DS_Store

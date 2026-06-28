@@ -60,8 +60,10 @@ func main() {
 	k := kong.Parse(&CLI,
 		kong.Name("maeilham"),
 		kong.UsageOnError(),
+		kong.BindTo(ctx, (*context.Context)(nil)),
+		kong.Bind(d),
 	)
-	k.FatalIfErrorf(k.Run(ctx, d))
+	k.FatalIfErrorf(k.Run())
 }
 
 type deps struct {

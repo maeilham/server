@@ -70,21 +70,30 @@ func PickForSubscriber(
 		return nil, nil
 	}
 
-	totalWeight := 0
-	for _, c := range candidates {
-		totalWeight += c.weight
+	weights := make([]int, len(candidates))
+	for i, c := range candidates {
+		weights[i] = c.weight
 	}
+	return candidates[pickByWeight(weights, dailyPickSeed(subscriberID, today))].content, nil
+}
 
-	seed := dailyPickSeed(subscriberID, today)
-	target := seed % uint64(totalWeight)
+// pickByWeight는 seed에 따라 가중치에 비례해 인덱스 하나를 고른다.
+// (subscriber, day) 시드를 쓰면 같은 입력에 항상 같은 결과가 나온다.
+// weights는 비어 있지 않고 합이 0보다 커야 한다 (구독 가중치는 DB에서 1~5로 제한됨).
+func pickByWeight(weights []int, seed uint64) int {
+	total := 0
+	for _, w := range weights {
+		total += w
+	}
+	target := seed % uint64(total)
 	acc := uint64(0)
-	for _, c := range candidates {
-		acc += uint64(c.weight)
+	for i, w := range weights {
+		acc += uint64(w)
 		if target < acc {
-			return c.content, nil
+			return i
 		}
 	}
-	return candidates[len(candidates)-1].content, nil
+	return len(weights) - 1
 }
 
 // dailyPickSeed returns a deterministic seed for (subscriberID, today).

@@ -8,6 +8,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/maeilham/server/internal/content"
 	httpsrv "github.com/maeilham/server/internal/http"
 	"github.com/maeilham/server/internal/subscriber"
 	"github.com/maeilham/server/internal/terminal"
@@ -38,6 +39,12 @@ func (c *ServeCmd) Run(ctx context.Context, d *deps) error {
 			SubSvc:  subSvc,
 			BaseURL: d.cfg.BaseURL,
 			SSHAddr: d.cfg.SSHAddr,
+
+			Contents: d.contentStore,
+			Bodies: content.NewCachedBodySource(
+				content.NewGitHubClient(d.cfg.GitHubToken),
+				content.BodyOptions{Logger: d.log},
+			),
 		}),
 		ReadHeaderTimeout: 10 * time.Second,
 	}

@@ -20,6 +20,7 @@ type Content struct {
 	DiscussionURL    string
 	DiscussionNodeID string
 	GitHubURL        string // populated by JOIN queries; not a contents column
+	RepoName         string // repos.display_name. GetByRepoAndID에서만 채워진다
 	RotationCount    int
 }
 
@@ -31,7 +32,11 @@ type ContentRepository interface {
 	// MarkDeleted soft-deletes a single content row.
 	MarkDeleted(ctx context.Context, repoSlug, contentID string) error
 	// GetByID returns one content item by contentID (across all active repos).
+	// content_id는 repo 안에서만 유일하므로, 외부에 id를 노출하는 곳에서는 GetByRepoAndID를 쓴다.
 	GetByID(ctx context.Context, contentID string) (*Content, error)
+	// GetByRepoAndID returns one content item identified by (repoSlug, contentID).
+	// Returns (nil, nil) if it does not exist, is deleted, or its repo is inactive.
+	GetByRepoAndID(ctx context.Context, repoSlug, contentID string) (*Content, error)
 	// TodayForRepo returns the next-in-rotation content for a given repo.
 	TodayForRepo(ctx context.Context, repoSlug string) (*Content, error)
 	// Today returns the next-in-rotation content for the first active repo (lexicographic).
@@ -134,6 +139,30 @@ func (s *sqlContentStore) GetByID(ctx context.Context, contentID string) (*Conte
 	}
 	if err != nil {
 		return nil, fmt.Errorf("get content %s: %w", contentID, err)
+	}
+	return &c, nil
+}
+
+func (s *sqlContentStore) GetByRepoAndID(ctx context.Context, repoSlug, contentID string) (*Content, error) {
+	var c Content
+	err := s.db.QueryRowContext(ctx, `
+		SELECT c.repo_slug, c.content_id, c.title, c.preview, COALESCE(c.tags,'[]'), c.body_path,
+		       COALESCE(c.github_sha,''), r.github_url, r.display_name,
+		       COALESCE(c.discussion_url,''), COALESCE(c.discussion_node_id,''), c.rotation_count
+		  FROM contents c
+		  JOIN repos r ON r.slug = c.repo_slug
+		 WHERE c.repo_slug = ? AND c.content_id = ? AND c.deleted_at IS NULL AND r.active = 1`,
+		repoSlug, contentID,
+	).Scan(
+		&c.RepoSlug, &c.ContentID, &c.Title, &c.Preview, &c.Tags, &c.BodyPath,
+		&c.GithubSHA, &c.GitHubURL, &c.RepoName,
+		&c.DiscussionURL, &c.DiscussionNodeID, &c.RotationCount,
+	)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get content %s/%s: %w", repoSlug, contentID, err)
 	}
 	return &c, nil
 }

@@ -7,6 +7,8 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	chimw "github.com/go-chi/chi/v5/middleware"
+	"github.com/maeilham/server/internal/content"
+	"github.com/maeilham/server/internal/store"
 	"github.com/maeilham/server/internal/subscriber"
 	"github.com/maeilham/server/internal/terminal"
 )
@@ -16,6 +18,9 @@ type Deps struct {
 	SubSvc  *subscriber.SubscriberService
 	BaseURL string
 	SSHAddr string // SSH 서버 주소 (WebSocket 브리지용)
+
+	Contents store.ContentRepository // 콘텐츠 메타데이터 조회
+	Bodies   content.BodySource      // 콘텐츠 본문(마크다운) 조회
 }
 
 func NewRouter(deps Deps) http.Handler {
@@ -39,6 +44,9 @@ func NewRouter(deps Deps) http.Handler {
 	r.Post("/api/subscribe", sub.handleSubscribe)
 	r.Get("/api/confirm", sub.handleConfirm)
 	r.Post("/api/unsubscribe", sub.handleUnsubscribe)
+
+	contents := &contentHandler{contents: deps.Contents, bodies: deps.Bodies, logger: deps.Logger}
+	r.Get("/api/contents/{repo}/{id}", contents.handleGet)
 
 	sshAddr := deps.SSHAddr
 	if sshAddr == "" {

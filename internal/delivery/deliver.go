@@ -139,7 +139,7 @@ func DailySend(
 			Preview:        content.Preview,
 			GitHubURL:      buildGitHubURL(repoGitHubURL, content.BodyPath),
 			DiscussionURL:  discussionURLOrFallback(content.DiscussionURL, repoGitHubURL),
-			UnsubscribeURL: buildUnsubscribeURL(opts.APIURL, opts.Secret, sub.Email),
+			UnsubscribeURL: buildUnsubscribeURL(opts.BaseURL, opts.Secret, sub.Email),
 		}
 		subject, text, htmlBody := mail.RenderDaily(data)
 

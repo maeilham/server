@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -75,6 +76,43 @@ func TestDailySend_HappyPath(t *testing.T) {
 	}
 	if msg.Subject == "" || msg.TextBody == "" {
 		t.Errorf("subject/body empty: subj=%q text=%q", msg.Subject, msg.TextBody)
+	}
+}
+
+// 메일의 해지 링크는 웹 프론트(BaseURL)로 가야 한다. 해지 화면은 웹에 있고 API 서버에는 `/`가 없어서,
+// API 주소로 만들면 링크를 눌렀을 때 404가 된다.
+func TestDailySend_UnsubscribeLinkPointsToWeb(t *testing.T) {
+	db := newTestDB(t)
+	id := insertConfirmedSubscriber(t, db, "me@example.com")
+	insertRepo(t, db, "be")
+	insertContent(t, db, "be", "0001")
+	subscribe(t, db, id, "be", 3)
+
+	mockM := &mockMailer{}
+	_, err := DailySend(context.Background(), discardLogger(), mockM, DailySendOptions{
+		Day:          time.Date(2026, 5, 27, 0, 0, 0, 0, time.UTC),
+		BaseURL:      "https://web.example/",
+		APIURL:       "https://api.example",
+		Secret:       "test-secret",
+		SubRepo:      store.NewSubscriberStore(db),
+		RepoStore:    store.NewRepoStore(db),
+		ContentStore: store.NewContentStore(db),
+		LogStore:     store.NewDeliveryLogStore(db),
+	})
+	if err != nil {
+		t.Fatalf("DailySend: %v", err)
+	}
+	if len(mockM.messages) != 1 {
+		t.Fatalf("expected 1 mail sent, got %d", len(mockM.messages))
+	}
+	msg := mockM.messages[0]
+	if want := "구독 해지 → https://web.example/?action=unsubscribe&token="; !strings.Contains(msg.TextBody, want) {
+		t.Errorf("text body has no web unsubscribe link (want %q)\n%s", want, msg.TextBody)
+	}
+	for name, body := range map[string]string{"text": msg.TextBody, "html": msg.HTMLBody} {
+		if strings.Contains(body, "api.example") {
+			t.Errorf("%s body links to the API server", name)
+		}
 	}
 }
 

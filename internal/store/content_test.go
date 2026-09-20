@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"testing"
+	"time"
 
 	dbpkg "github.com/maeilham/server/internal/db"
 	"github.com/maeilham/server/internal/store"
@@ -123,13 +124,18 @@ func TestListSummaries_OrderFilterLimit(t *testing.T) {
 	insertRepo(t, db, "be", "백엔드", 1)
 	insertRepo(t, db, "fe", "프론트엔드", 1)
 	insertRepo(t, db, "old", "옛 repo", 0) // 비활성
-	insertContent(t, db, "be", "0001", "be1 (발송 09-10)")
-	insertContent(t, db, "be", "0002", "be2 (미발송)")
-	insertContent(t, db, "be", "0003", "be3 (삭제됨)")
-	insertContent(t, db, "fe", "0001", "fe1 (발송 09-12)")
-	insertContent(t, db, "old", "0001", "비활성 repo의 글")
-	mustExec(t, db, `UPDATE contents SET sent_at = '2026-09-10 07:00:00' WHERE repo_slug='be' AND content_id='0001'`)
-	mustExec(t, db, `UPDATE contents SET sent_at = '2026-09-12 07:00:00' WHERE repo_slug='fe' AND content_id='0001'`)
+	for _, c := range [][2]string{{"be", "0001"}, {"be", "0002"}, {"be", "0003"}, {"be", "0004"}, {"be", "0005"}, {"fe", "0001"}, {"old", "0001"}} {
+		insertContent(t, db, c[0], c[1], c[0]+"/"+c[1])
+	}
+	set := func(repo, id, col, val string) {
+		mustExec(t, db, `UPDATE contents SET `+col+` = ? WHERE repo_slug = ? AND content_id = ?`, val, repo, id)
+	}
+	set("be", "0001", "authored_at", "2026-09-01 00:00:00")
+	set("be", "0002", "authored_at", "2026-09-05 00:00:00")
+	set("be", "0002", "sent_at", "2026-09-20 07:00:00")   // 최근에 발송됐어도 순서에는 영향이 없어야 함
+	set("be", "0004", "synced_at", "2026-09-07 12:00:00") // authored_at이 NULL이면 synced_at으로 대체
+	set("be", "0005", "authored_at", "2026-09-10 00:00:00")
+	set("fe", "0001", "authored_at", "2026-09-10 00:00:00") // be/0005와 같은 시각: content_id 내림차순
 	mustExec(t, db, `UPDATE contents SET deleted_at = CURRENT_TIMESTAMP WHERE repo_slug='be' AND content_id='0003'`)
 	cs := store.NewContentStore(db)
 
@@ -141,8 +147,8 @@ func TestListSummaries_OrderFilterLimit(t *testing.T) {
 	for _, c := range list {
 		got = append(got, c.RepoSlug+"/"+c.ContentID)
 	}
-	// 발송된 글이 최근 발송 순으로 먼저, 그 뒤에 미발송 글. 삭제·비활성 repo는 제외.
-	want := []string{"fe/0001", "be/0001", "be/0002"}
+	// 작성일 최신순. 삭제·비활성 repo 제외. 같은 시각이면 content_id 내림차순(0005 > 0001).
+	want := []string{"be/0005", "fe/0001", "be/0004", "be/0002", "be/0001"}
 	if len(got) != len(want) {
 		t.Fatalf("목록 = %v, want %v", got, want)
 	}
@@ -152,19 +158,22 @@ func TestListSummaries_OrderFilterLimit(t *testing.T) {
 		}
 	}
 
-	first := list[0]
-	if first.RepoName != "프론트엔드" || first.Tags != `["go","cache"]` || first.Preview == "" {
-		t.Errorf("필드가 채워지지 않음: %+v", first)
+	fmtT := func(tm time.Time) string { return tm.UTC().Format("2006-01-02 15:04:05") }
+	if list[0].RepoName != "백엔드" || list[0].Tags != `["go","cache"]` || list[0].Preview == "" {
+		t.Errorf("필드가 채워지지 않음: %+v", list[0])
 	}
-	if first.SentAt.IsZero() || first.SentAt.UTC().Format("2006-01-02 15:04:05") != "2026-09-12 07:00:00" {
-		t.Errorf("SentAt = %v, want 2026-09-12 07:00:00", first.SentAt)
+	if fmtT(list[0].AuthoredAt) != "2026-09-10 00:00:00" {
+		t.Errorf("AuthoredAt = %v", list[0].AuthoredAt)
 	}
-	if !list[2].SentAt.IsZero() {
-		t.Errorf("미발송 글의 SentAt은 zero여야 함: %v", list[2].SentAt)
+	if fmtT(list[2].AuthoredAt) != "2026-09-07 12:00:00" {
+		t.Errorf("authored_at이 없으면 synced_at으로 대체돼야 함: %v", list[2].AuthoredAt)
+	}
+	if fmtT(list[3].SentAt) != "2026-09-20 07:00:00" || !list[0].SentAt.IsZero() {
+		t.Errorf("SentAt: 발송 글=%v, 미발송 글=%v", list[3].SentAt, list[0].SentAt)
 	}
 
 	limited, err := cs.ListSummaries(context.Background(), 2)
-	if err != nil || len(limited) != 2 || limited[0].RepoSlug != "fe" {
+	if err != nil || len(limited) != 2 || limited[0].ContentID != "0005" || limited[1].RepoSlug != "fe" {
 		t.Errorf("limit=2: len=%d err=%v", len(limited), err)
 	}
 }
@@ -173,5 +182,38 @@ func TestListSummaries_Empty(t *testing.T) {
 	list, err := store.NewContentStore(newTestDB(t)).ListSummaries(context.Background(), 50)
 	if err != nil || len(list) != 0 {
 		t.Errorf("빈 DB: len=%d err=%v", len(list), err)
+	}
+}
+
+func TestSetAuthoredAt_OnlyWhenEmpty(t *testing.T) {
+	db := newTestDB(t)
+	insertRepo(t, db, "be", "백엔드", 1)
+	insertContent(t, db, "be", "0001", "글")
+	cs := store.NewContentStore(db)
+	ctx := context.Background()
+
+	// 처음에는 비어 있다 (ListByRepo는 저장된 값 그대로 돌려준다)
+	rows, err := cs.ListByRepo(ctx, "be")
+	if err != nil || len(rows) != 1 || !rows[0].AuthoredAt.IsZero() {
+		t.Fatalf("초기 상태: rows=%v err=%v", rows, err)
+	}
+
+	// 한국 시간으로 줘도 UTC로 저장된다
+	kst := time.FixedZone("KST", 9*3600)
+	if err := cs.SetAuthoredAt(ctx, "be", "0001", time.Date(2026, 9, 1, 9, 0, 0, 0, kst)); err != nil {
+		t.Fatal(err)
+	}
+	rows, _ = cs.ListByRepo(ctx, "be")
+	if got := rows[0].AuthoredAt.UTC().Format("2006-01-02 15:04:05"); got != "2026-09-01 00:00:00" {
+		t.Errorf("AuthoredAt = %s, want 2026-09-01 00:00:00 (UTC)", got)
+	}
+
+	// 이미 채워졌으면 덮어쓰지 않는다 (최초 커밋 시각은 바뀌지 않음)
+	if err := cs.SetAuthoredAt(ctx, "be", "0001", time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)); err != nil {
+		t.Fatal(err)
+	}
+	rows, _ = cs.ListByRepo(ctx, "be")
+	if got := rows[0].AuthoredAt.UTC().Format("2006-01-02"); got != "2026-09-01" {
+		t.Errorf("덮어써짐: %s", got)
 	}
 }

@@ -43,7 +43,8 @@ func (c *SyncCmd) Run(ctx context.Context, d *deps) error {
 		log.Info("sync done",
 			"scanned", stats.Scanned, "inserted", stats.Inserted,
 			"updated", stats.Updated, "deleted", stats.Deleted,
-			"skipped", stats.Skipped, "errors", stats.Errors)
+			"skipped", stats.Skipped, "errors", stats.Errors,
+			"authored", stats.Authored, "authored_failed", stats.AuthoredFailed)
 	}
 	return nil
 }

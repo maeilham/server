@@ -198,10 +198,12 @@ func TestContentGet_BrokenTagsBecomeEmptyArray(t *testing.T) {
 
 func TestContentList_OKShape(t *testing.T) {
 	// 한국 시간 16:00 = UTC 07:00. 응답은 항상 UTC(Z)로 나가야 한다.
-	sent := time.Date(2026, 9, 10, 16, 0, 0, 0, time.FixedZone("KST", 9*3600))
+	kst := time.FixedZone("KST", 9*3600)
+	sent := time.Date(2026, 9, 10, 16, 0, 0, 0, kst)
+	authored := time.Date(2026, 9, 5, 9, 0, 0, 0, kst) // = 2026-09-05T00:00:00Z
 	contents := &fakeContents{list: []*store.Content{
-		{RepoSlug: "be", RepoName: "백엔드", ContentID: "0002", Title: "발송된 글", Preview: "p", Tags: `["go"]`, SentAt: sent},
-		{RepoSlug: "be", RepoName: "백엔드", ContentID: "0001", Title: "미발송 글", Preview: "p", Tags: "깨진 JSON"},
+		{RepoSlug: "be", RepoName: "백엔드", ContentID: "0002", Title: "발송된 글", Preview: "p", Tags: `["go"]`, SentAt: sent, AuthoredAt: authored},
+		{RepoSlug: "be", RepoName: "백엔드", ContentID: "0001", Title: "미발송 글", Preview: "p", Tags: "깨진 JSON", AuthoredAt: authored},
 	}}
 	rec := getContent(t, contents, &fakeBodies{}, "/api/contents")
 	if rec.Code != http.StatusOK {
@@ -222,6 +224,9 @@ func TestContentList_OKShape(t *testing.T) {
 	a, b := got.Items[0], got.Items[1]
 	if a["title"] != "발송된 글" || a["sentAt"] != "2026-09-10T07:00:00Z" {
 		t.Errorf("첫 항목 = %v", a)
+	}
+	if a["authoredAt"] != "2026-09-05T00:00:00Z" || b["authoredAt"] != "2026-09-05T00:00:00Z" {
+		t.Errorf("authoredAt은 항상 있고 UTC여야 함: %v, %v", a["authoredAt"], b["authoredAt"])
 	}
 	if tags, _ := a["tags"].([]any); len(tags) != 1 || tags[0] != "go" {
 		t.Errorf("tags = %v", a["tags"])
@@ -306,12 +311,12 @@ func setupRealRouter(t *testing.T) (http.Handler, *rawFake) {
 	for _, q := range []string{
 		`INSERT INTO repos(slug, github_url, display_name) VALUES ('be', 'https://github.com/maeilham/be', '백엔드')`,
 		`INSERT INTO repos(slug, github_url, display_name) VALUES ('fe', 'https://github.com/maeilham/fe', '프론트')`,
-		`INSERT INTO contents(repo_slug, content_id, title, preview, tags, body_path, github_sha)
-		 VALUES ('be', '0001', '백엔드 글', 'p', '["go"]', 'content/0001-be.md', 'sha-be')`,
-		`INSERT INTO contents(repo_slug, content_id, title, preview, tags, body_path, github_sha, sent_at)
-		 VALUES ('be', '0002', '발송된 글', 'p', '[]', 'content/0002-be.md', 'sha-be2', '2026-09-10 07:00:00')`,
-		`INSERT INTO contents(repo_slug, content_id, title, preview, tags, body_path, github_sha)
-		 VALUES ('fe', '0001', '프론트 글', 'p', '[]', 'content/0001-fe.md', 'sha-fe')`,
+		`INSERT INTO contents(repo_slug, content_id, title, preview, tags, body_path, github_sha, authored_at)
+		 VALUES ('be', '0001', '백엔드 글', 'p', '["go"]', 'content/0001-be.md', 'sha-be', '2026-09-01 00:00:00')`,
+		`INSERT INTO contents(repo_slug, content_id, title, preview, tags, body_path, github_sha, sent_at, authored_at)
+		 VALUES ('be', '0002', '발송된 글', 'p', '[]', 'content/0002-be.md', 'sha-be2', '2026-09-10 07:00:00', '2026-09-05 00:00:00')`,
+		`INSERT INTO contents(repo_slug, content_id, title, preview, tags, body_path, github_sha, authored_at)
+		 VALUES ('fe', '0001', '프론트 글', 'p', '[]', 'content/0001-fe.md', 'sha-fe', '2026-09-10 00:00:00')`,
 	} {
 		if _, err := conn.Exec(q); err != nil {
 			t.Fatal(err)
@@ -374,21 +379,24 @@ func TestContentList_ThroughRealRouter(t *testing.T) {
 	if len(items) != 3 {
 		t.Fatalf("items = %d개, want 3: %v", len(items), body)
 	}
-	// 발송된 글(be/0002)이 먼저, 그 뒤에 미발송 글이 content_id 내림차순·repo 순으로 온다.
+	// 작성일 최신순: fe/0001(09-10), be/0002(09-05), be/0001(09-01). 발송 여부는 순서에 영향이 없다.
 	var order []string
 	for _, it := range items {
 		m := it.(map[string]any)
 		order = append(order, m["repo"].(string)+"/"+m["id"].(string))
 	}
-	if got := fmt.Sprint(order); got != "[be/0002 be/0001 fe/0001]" {
+	if got := fmt.Sprint(order); got != "[fe/0001 be/0002 be/0001]" {
 		t.Errorf("순서 = %s", got)
 	}
-	first := items[0].(map[string]any)
-	if first["sentAt"] != "2026-09-10T07:00:00Z" || first["repoName"] != "백엔드" {
+	first, second := items[0].(map[string]any), items[1].(map[string]any)
+	if first["authoredAt"] != "2026-09-10T00:00:00Z" || first["repoName"] != "프론트" {
 		t.Errorf("첫 항목 = %v", first)
 	}
-	if _, has := items[1].(map[string]any)["sentAt"]; has {
-		t.Errorf("미발송 글에는 sentAt이 없어야 함: %v", items[1])
+	if _, has := first["sentAt"]; has {
+		t.Errorf("미발송 글에는 sentAt이 없어야 함: %v", first)
+	}
+	if second["sentAt"] != "2026-09-10T07:00:00Z" || second["authoredAt"] != "2026-09-05T00:00:00Z" {
+		t.Errorf("두 번째 항목 = %v", second)
 	}
 	for _, it := range items {
 		if _, has := it.(map[string]any)["body"]; has {

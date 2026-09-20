@@ -51,13 +51,16 @@ const (
 
 // contentSummary는 목록의 항목 하나다. 본문은 무거우므로 포함하지 않고, 상세 API로 따로 가져온다.
 type contentSummary struct {
-	Repo     string     `json:"repo"`
-	RepoName string     `json:"repoName"`
-	ID       string     `json:"id"`
-	Title    string     `json:"title"`
-	Preview  string     `json:"preview"`
-	Tags     []string   `json:"tags"`
-	SentAt   *time.Time `json:"sentAt,omitempty"` // 마지막으로 발송된 시각. 아직 발송 전이면 없다
+	Repo     string   `json:"repo"`
+	RepoName string   `json:"repoName"`
+	ID       string   `json:"id"`
+	Title    string   `json:"title"`
+	Preview  string   `json:"preview"`
+	Tags     []string `json:"tags"`
+	// AuthoredAt은 글이 작성된 시각(GitHub 최초 커밋)이다. 아직 못 채웠으면 서버가 sync한 시각으로 대체한다.
+	AuthoredAt time.Time `json:"authoredAt"`
+	// SentAt은 마지막으로 발송된 시각이다. 로테이션으로 덮어써지고 발송 전이면 없다.
+	SentAt *time.Time `json:"sentAt,omitempty"`
 }
 
 // contentListResponse는 배열 대신 객체로 감싼다. 나중에 페이지 정보를 덧붙여도 호환된다.
@@ -66,7 +69,7 @@ type contentListResponse struct {
 }
 
 // handleList는 GET /api/contents?limit=N 을 처리한다.
-// 발송된 글이 최근 순으로 먼저, 그 뒤에 아직 발송 전인 글이 온다. limit 기본 50, 최대 100.
+// 작성일 최신순이다. limit 기본 50, 최대 100.
 func (h *contentHandler) handleList(w http.ResponseWriter, r *http.Request) {
 	list, err := h.contents.ListSummaries(r.Context(), parseListLimit(r.URL.Query().Get("limit")))
 	if err != nil {
@@ -80,6 +83,7 @@ func (h *contentHandler) handleList(w http.ResponseWriter, r *http.Request) {
 		s := contentSummary{
 			Repo: c.RepoSlug, RepoName: c.RepoName, ID: c.ContentID,
 			Title: c.Title, Preview: c.Preview, Tags: decodeTags(c.Tags),
+			AuthoredAt: c.AuthoredAt.UTC(),
 		}
 		if !c.SentAt.IsZero() {
 			sent := c.SentAt.UTC()

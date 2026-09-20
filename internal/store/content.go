@@ -22,21 +22,27 @@ type Content struct {
 	GitHubURL        string    // populated by JOIN queries; not a contents column
 	RepoName         string    // repos.display_name. GetByRepoAndID, ListSummaries에서만 채워진다
 	SentAt           time.Time // 마지막 발송 시각. 한 번도 발송하지 않았으면 zero. ListSummaries에서만 채워진다
-	RotationCount    int
+	// AuthoredAt은 글이 작성된 시각(GitHub 최초 커밋)이다.
+	// ListByRepo: 저장된 값 그대로(아직 못 채웠으면 zero). ListSummaries: 없으면 synced_at으로 대체한 표시용 값.
+	AuthoredAt    time.Time
+	RotationCount int
 }
 
 type ContentRepository interface {
 	// Upsert inserts or updates a content row. Returns true if a new row was inserted.
 	Upsert(ctx context.Context, c *Content) (inserted bool, err error)
-	// ListByRepo returns lightweight rows (ContentID, GithubSHA, DiscussionNodeID) for sync diffing.
+	// ListByRepo returns lightweight rows (ContentID, GithubSHA, DiscussionNodeID, AuthoredAt) for sync diffing.
 	ListByRepo(ctx context.Context, repoSlug string) ([]*Content, error)
+	// SetAuthoredAt records when a content was authored. It never overwrites an existing value:
+	// 최초 커밋 시각은 바뀌지 않으므로 이미 채워진 글은 그대로 둔다.
+	SetAuthoredAt(ctx context.Context, repoSlug, contentID string, t time.Time) error
 	// MarkDeleted soft-deletes a single content row.
 	MarkDeleted(ctx context.Context, repoSlug, contentID string) error
 	// GetByID returns one content item by contentID (across all active repos).
 	// content_id는 repo 안에서만 유일하므로, 외부에 id를 노출하는 곳에서는 GetByRepoAndID를 쓴다.
 	GetByID(ctx context.Context, contentID string) (*Content, error)
-	// ListSummaries returns up to limit contents of active repos for a public listing.
-	// 이미 발송한 글이 먼저(최근 발송 순), 그 뒤에 아직 발송하지 않은 글이 content_id 내림차순으로 온다.
+	// ListSummaries returns up to limit contents of active repos for a public listing,
+	// 작성일(없으면 synced_at) 최신순이고 같으면 content_id 내림차순이다.
 	ListSummaries(ctx context.Context, limit int) ([]*Content, error)
 	// GetByRepoAndID returns one content item identified by (repoSlug, contentID).
 	// Returns (nil, nil) if it does not exist, is deleted, or its repo is inactive.
@@ -97,7 +103,7 @@ func (s *sqlContentStore) Upsert(ctx context.Context, c *Content) (bool, error) 
 
 func (s *sqlContentStore) ListByRepo(ctx context.Context, repoSlug string) ([]*Content, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT content_id, COALESCE(github_sha,''), COALESCE(discussion_node_id,'')
+		`SELECT content_id, COALESCE(github_sha,''), COALESCE(discussion_node_id,''), authored_at
 		   FROM contents WHERE repo_slug = ? AND deleted_at IS NULL`,
 		repoSlug,
 	)
@@ -108,12 +114,29 @@ func (s *sqlContentStore) ListByRepo(ctx context.Context, repoSlug string) ([]*C
 	var out []*Content
 	for rows.Next() {
 		c := &Content{RepoSlug: repoSlug}
-		if err := rows.Scan(&c.ContentID, &c.GithubSHA, &c.DiscussionNodeID); err != nil {
+		var authored sql.NullTime
+		if err := rows.Scan(&c.ContentID, &c.GithubSHA, &c.DiscussionNodeID, &authored); err != nil {
 			return nil, err
+		}
+		if authored.Valid {
+			c.AuthoredAt = authored.Time
 		}
 		out = append(out, c)
 	}
 	return out, rows.Err()
+}
+
+func (s *sqlContentStore) SetAuthoredAt(ctx context.Context, repoSlug, contentID string, t time.Time) error {
+	// sent_at과 같은 형식(UTC, 초 단위)으로 저장해야 문자열 정렬이 시간 순서와 일치한다.
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE contents SET authored_at = ?
+		  WHERE repo_slug = ? AND content_id = ? AND authored_at IS NULL`,
+		t.UTC().Format("2006-01-02 15:04:05"), repoSlug, contentID,
+	)
+	if err != nil {
+		return fmt.Errorf("set authored_at %s/%s: %w", repoSlug, contentID, err)
+	}
+	return nil
 }
 
 func (s *sqlContentStore) MarkDeleted(ctx context.Context, repoSlug, contentID string) error {
@@ -149,11 +172,12 @@ func (s *sqlContentStore) GetByID(ctx context.Context, contentID string) (*Conte
 
 func (s *sqlContentStore) ListSummaries(ctx context.Context, limit int) ([]*Content, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT c.repo_slug, c.content_id, c.title, c.preview, COALESCE(c.tags,'[]'), r.display_name, c.sent_at
+		SELECT c.repo_slug, c.content_id, c.title, c.preview, COALESCE(c.tags,'[]'), r.display_name,
+		       c.sent_at, c.authored_at, c.synced_at
 		  FROM contents c
 		  JOIN repos r ON r.slug = c.repo_slug
 		 WHERE c.deleted_at IS NULL AND r.active = 1
-		 ORDER BY c.sent_at IS NULL, c.sent_at DESC, c.content_id DESC, c.repo_slug
+		 ORDER BY COALESCE(c.authored_at, c.synced_at) DESC, c.content_id DESC, c.repo_slug
 		 LIMIT ?`, limit)
 	if err != nil {
 		return nil, fmt.Errorf("list content summaries: %w", err)
@@ -162,12 +186,19 @@ func (s *sqlContentStore) ListSummaries(ctx context.Context, limit int) ([]*Cont
 	var out []*Content
 	for rows.Next() {
 		var c Content
-		var sent sql.NullTime
-		if err := rows.Scan(&c.RepoSlug, &c.ContentID, &c.Title, &c.Preview, &c.Tags, &c.RepoName, &sent); err != nil {
+		// COALESCE 결과는 컬럼 타입 정보를 잃어 시각으로 바로 읽히지 않으므로, 컬럼을 각각 읽어 여기서 합친다.
+		var sent, authored, synced sql.NullTime
+		if err := rows.Scan(&c.RepoSlug, &c.ContentID, &c.Title, &c.Preview, &c.Tags, &c.RepoName,
+			&sent, &authored, &synced); err != nil {
 			return nil, err
 		}
 		if sent.Valid {
 			c.SentAt = sent.Time
+		}
+		if authored.Valid {
+			c.AuthoredAt = authored.Time
+		} else if synced.Valid {
+			c.AuthoredAt = synced.Time
 		}
 		out = append(out, &c)
 	}

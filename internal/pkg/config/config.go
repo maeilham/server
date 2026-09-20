@@ -14,6 +14,9 @@ type Config struct {
 	APIURL     string // API 서버 URL (메일 링크용)
 	Secret     string
 
+	// TimeZone은 서비스의 "하루"를 나누는 시간대다(오늘의 질문). IANA 이름, 기본 Asia/Seoul.
+	TimeZone string
+
 	SSHAddr string
 
 	GitHubToken string
@@ -35,6 +38,7 @@ func Load() (*Config, error) {
 		BaseURL:       getEnv("MAEILHAM_BASE_URL", "http://localhost:5173"),
 		APIURL:        getEnv("MAEILHAM_API_URL", "http://localhost:8080"),
 		Secret:        getEnv("MAEILHAM_SECRET", "dev-secret-change-me"),
+		TimeZone:      getEnv("MAEILHAM_TZ", "Asia/Seoul"),
 		SSHAddr: getEnv("MAEILHAM_SSH_ADDR", ":2222"),
 		GitHubToken:          os.Getenv("MAEILHAM_GITHUB_TOKEN"),
 		GitHubAppID:          parseInt64(os.Getenv("MAEILHAM_GITHUB_APP_ID")),

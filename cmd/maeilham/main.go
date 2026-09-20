@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	_ "time/tzdata"
 
 	"github.com/alecthomas/kong"
 	"github.com/maeilham/server/internal/db"

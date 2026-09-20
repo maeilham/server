@@ -21,6 +21,7 @@ type Deps struct {
 
 	Contents store.ContentRepository // 콘텐츠 메타데이터 조회
 	Bodies   content.BodySource      // 콘텐츠 본문(마크다운) 조회
+	Today    TodayPicker             // 오늘의 질문 선정
 }
 
 func NewRouter(deps Deps) http.Handler {
@@ -46,6 +47,9 @@ func NewRouter(deps Deps) http.Handler {
 	r.Post("/api/unsubscribe", sub.handleUnsubscribe)
 
 	contents := &contentHandler{contents: deps.Contents, bodies: deps.Bodies, logger: deps.Logger}
+	today := &todayHandler{picker: deps.Today, logger: deps.Logger}
+	r.Get("/api/today", today.handleGet)
+
 	r.Get("/api/contents", contents.handleList)
 	r.Get("/api/contents/{repo}/{id}", contents.handleGet)
 

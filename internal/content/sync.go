@@ -20,6 +20,9 @@ type SyncStats struct {
 	Skipped  int
 	Deleted  int
 	Errors   int
+
+	Authored       int // 작성일(최초 커밋 시각)을 새로 채운 글 수
+	AuthoredFailed int // GitHub 조회에 실패해 비워 둔 글 수 (다음 sync가 다시 시도)
 }
 
 // filename pattern (basename only): 0001-some-slug.md → content_id = "0001", send_order = 1
@@ -72,7 +75,12 @@ func Sync(
 		seen[contentID] = struct{}{}
 
 		prev, exists := current[contentID]
+		// 새 글이거나, 작성일 컬럼이 생기기 전부터 있던 글이면 작성일을 채워야 한다.
+		needAuthored := !exists || prev.AuthoredAt.IsZero()
 		if exists && prev.GithubSHA == e.SHA {
+			if needAuthored { // 본문은 그대로여도 작성일은 채운다
+				fillAuthoredAt(ctx, logger, contentStore, ghClient, owner, repoName, repoSlug, contentID, e.Path, stats)
+			}
 			continue // unchanged
 		}
 
@@ -113,6 +121,9 @@ func Sync(
 			stats.Errors++
 			continue
 		}
+		if needAuthored {
+			fillAuthoredAt(ctx, logger, contentStore, ghClient, owner, repoName, repoSlug, contentID, e.Path, stats)
+		}
 		if inserted {
 			stats.Inserted++
 		} else {
@@ -139,6 +150,31 @@ func Sync(
 	}
 
 	return stats, nil
+}
+
+// fillAuthoredAt는 글의 작성일(GitHub에서 그 파일의 최초 커밋 시각)을 조회해 저장한다.
+// 조회에 실패해도 sync 자체는 성공으로 본다. NULL로 남겨 두면 다음 sync가 다시 시도하고,
+// 그동안 목록은 synced_at으로 대체해 보여준다.
+func fillAuthoredAt(
+	ctx context.Context,
+	logger *slog.Logger,
+	contentStore store.ContentRepository,
+	ghClient *GitHubClient,
+	owner, repoName, repoSlug, contentID, path string,
+	stats *SyncStats,
+) {
+	t, err := ghClient.FirstCommitDate(ctx, owner, repoName, path)
+	if err != nil {
+		logger.Warn("authored date lookup failed (will retry next sync)", "content", contentID, "err", err)
+		stats.AuthoredFailed++
+		return
+	}
+	if err := contentStore.SetAuthoredAt(ctx, repoSlug, contentID, t); err != nil {
+		logger.Error("save authored date", "content", contentID, "err", err)
+		stats.Errors++
+		return
+	}
+	stats.Authored++
 }
 
 func encodeTags(tags []string) (string, error) {

@@ -8,6 +8,8 @@ import (
 	"os"
 	"time"
 
+	"github.com/maeilham/server/internal/content"
+	"github.com/maeilham/server/internal/delivery"
 	httpsrv "github.com/maeilham/server/internal/http"
 	"github.com/maeilham/server/internal/subscriber"
 	"github.com/maeilham/server/internal/terminal"
@@ -16,6 +18,11 @@ import (
 type ServeCmd struct{}
 
 func (c *ServeCmd) Run(ctx context.Context, d *deps) error {
+	loc, err := time.LoadLocation(d.cfg.TimeZone)
+	if err != nil {
+		return fmt.Errorf("MAEILHAM_TZ %q: %w", d.cfg.TimeZone, err)
+	}
+
 	subSvc := subscriber.NewSubscriberService(d.subRepo, d.mailer(), d.cfg.Secret, d.cfg.APIURL)
 
 	termSvc := terminal.NewService(subSvc, d.repoStore, d.contentStore, d.ghApp())
@@ -38,6 +45,13 @@ func (c *ServeCmd) Run(ctx context.Context, d *deps) error {
 			SubSvc:  subSvc,
 			BaseURL: d.cfg.BaseURL,
 			SSHAddr: d.cfg.SSHAddr,
+
+			Contents: d.contentStore,
+			Bodies: content.NewCachedBodySource(
+				content.NewGitHubClient(d.cfg.GitHubToken),
+				content.BodyOptions{Logger: d.log},
+			),
+			Today: &delivery.TodayService{Repos: d.repoStore, Contents: d.contentStore, Log: d.logStore, Loc: loc},
 		}),
 		ReadHeaderTimeout: 10 * time.Second,
 	}

@@ -3,6 +3,7 @@ package content
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -20,6 +21,10 @@ const (
 	maxFileBytes    = 64 * 1024 // 한 파일 최대 64KB (markdown으론 충분)
 	httpTimeout     = 15 * time.Second
 )
+
+// ErrNotFound는 GitHub에 해당 파일이 없을 때(삭제/이름 변경) FetchRaw가 돌려주는 오류다.
+// 일시적 장애와 구분되어야 한다: 삭제된 글을 캐시된 옛 본문으로 계속 보여주면 안 된다.
+var ErrNotFound = errors.New("content not found on github")
 
 type GitHubClient struct {
 	HTTP  *http.Client
@@ -132,6 +137,9 @@ func (c *GitHubClient) FetchRaw(ctx context.Context, owner, repo, ref, path stri
 	}
 	defer closeutil.LogClose("github raw response", resp.Body)
 
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, fmt.Errorf("%w: %s", ErrNotFound, path)
+	}
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("raw status %d for %s", resp.StatusCode, path)
 	}

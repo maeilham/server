@@ -117,3 +117,61 @@ func TestGetByRepoAndID_NotFoundCases(t *testing.T) {
 		}
 	}
 }
+
+func TestListSummaries_OrderFilterLimit(t *testing.T) {
+	db := newTestDB(t)
+	insertRepo(t, db, "be", "백엔드", 1)
+	insertRepo(t, db, "fe", "프론트엔드", 1)
+	insertRepo(t, db, "old", "옛 repo", 0) // 비활성
+	insertContent(t, db, "be", "0001", "be1 (발송 09-10)")
+	insertContent(t, db, "be", "0002", "be2 (미발송)")
+	insertContent(t, db, "be", "0003", "be3 (삭제됨)")
+	insertContent(t, db, "fe", "0001", "fe1 (발송 09-12)")
+	insertContent(t, db, "old", "0001", "비활성 repo의 글")
+	mustExec(t, db, `UPDATE contents SET sent_at = '2026-09-10 07:00:00' WHERE repo_slug='be' AND content_id='0001'`)
+	mustExec(t, db, `UPDATE contents SET sent_at = '2026-09-12 07:00:00' WHERE repo_slug='fe' AND content_id='0001'`)
+	mustExec(t, db, `UPDATE contents SET deleted_at = CURRENT_TIMESTAMP WHERE repo_slug='be' AND content_id='0003'`)
+	cs := store.NewContentStore(db)
+
+	list, err := cs.ListSummaries(context.Background(), 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, c := range list {
+		got = append(got, c.RepoSlug+"/"+c.ContentID)
+	}
+	// 발송된 글이 최근 발송 순으로 먼저, 그 뒤에 미발송 글. 삭제·비활성 repo는 제외.
+	want := []string{"fe/0001", "be/0001", "be/0002"}
+	if len(got) != len(want) {
+		t.Fatalf("목록 = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("목록 = %v, want %v", got, want)
+		}
+	}
+
+	first := list[0]
+	if first.RepoName != "프론트엔드" || first.Tags != `["go","cache"]` || first.Preview == "" {
+		t.Errorf("필드가 채워지지 않음: %+v", first)
+	}
+	if first.SentAt.IsZero() || first.SentAt.UTC().Format("2006-01-02 15:04:05") != "2026-09-12 07:00:00" {
+		t.Errorf("SentAt = %v, want 2026-09-12 07:00:00", first.SentAt)
+	}
+	if !list[2].SentAt.IsZero() {
+		t.Errorf("미발송 글의 SentAt은 zero여야 함: %v", list[2].SentAt)
+	}
+
+	limited, err := cs.ListSummaries(context.Background(), 2)
+	if err != nil || len(limited) != 2 || limited[0].RepoSlug != "fe" {
+		t.Errorf("limit=2: len=%d err=%v", len(limited), err)
+	}
+}
+
+func TestListSummaries_Empty(t *testing.T) {
+	list, err := store.NewContentStore(newTestDB(t)).ListSummaries(context.Background(), 50)
+	if err != nil || len(list) != 0 {
+		t.Errorf("빈 DB: len=%d err=%v", len(list), err)
+	}
+}

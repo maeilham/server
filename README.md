@@ -71,6 +71,7 @@ curl -s localhost:8080/api/contents/backend-ops/0001 | jq
 | POST | `/api/subscribe` | 구독 신청 (확인 메일 발송) |
 | GET | `/api/confirm?token=` | 구독 확인 후 웹으로 리다이렉트 |
 | POST | `/api/unsubscribe?token=` | 구독 해지 |
+| GET | `/api/contents?limit=N` | 콘텐츠 목록 (본문 제외, 발송된 글이 최근 순으로 먼저, 기본 50 최대 100) |
 | GET | `/api/contents/{repo}/{id}` | 콘텐츠 상세 (메타데이터 + 마크다운 본문) |
 | GET | `/ws/terminal` | 웹 터미널용 WebSocket 브리지 |
 

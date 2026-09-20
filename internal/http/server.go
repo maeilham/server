@@ -46,6 +46,7 @@ func NewRouter(deps Deps) http.Handler {
 	r.Post("/api/unsubscribe", sub.handleUnsubscribe)
 
 	contents := &contentHandler{contents: deps.Contents, bodies: deps.Bodies, logger: deps.Logger}
+	r.Get("/api/contents", contents.handleList)
 	r.Get("/api/contents/{repo}/{id}", contents.handleGet)
 
 	sshAddr := deps.SSHAddr

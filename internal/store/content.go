@@ -19,8 +19,9 @@ type Content struct {
 	GithubSHA        string
 	DiscussionURL    string
 	DiscussionNodeID string
-	GitHubURL        string // populated by JOIN queries; not a contents column
-	RepoName         string // repos.display_name. GetByRepoAndID에서만 채워진다
+	GitHubURL        string    // populated by JOIN queries; not a contents column
+	RepoName         string    // repos.display_name. GetByRepoAndID, ListSummaries에서만 채워진다
+	SentAt           time.Time // 마지막 발송 시각. 한 번도 발송하지 않았으면 zero. ListSummaries에서만 채워진다
 	RotationCount    int
 }
 
@@ -34,6 +35,9 @@ type ContentRepository interface {
 	// GetByID returns one content item by contentID (across all active repos).
 	// content_id는 repo 안에서만 유일하므로, 외부에 id를 노출하는 곳에서는 GetByRepoAndID를 쓴다.
 	GetByID(ctx context.Context, contentID string) (*Content, error)
+	// ListSummaries returns up to limit contents of active repos for a public listing.
+	// 이미 발송한 글이 먼저(최근 발송 순), 그 뒤에 아직 발송하지 않은 글이 content_id 내림차순으로 온다.
+	ListSummaries(ctx context.Context, limit int) ([]*Content, error)
 	// GetByRepoAndID returns one content item identified by (repoSlug, contentID).
 	// Returns (nil, nil) if it does not exist, is deleted, or its repo is inactive.
 	GetByRepoAndID(ctx context.Context, repoSlug, contentID string) (*Content, error)
@@ -141,6 +145,33 @@ func (s *sqlContentStore) GetByID(ctx context.Context, contentID string) (*Conte
 		return nil, fmt.Errorf("get content %s: %w", contentID, err)
 	}
 	return &c, nil
+}
+
+func (s *sqlContentStore) ListSummaries(ctx context.Context, limit int) ([]*Content, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT c.repo_slug, c.content_id, c.title, c.preview, COALESCE(c.tags,'[]'), r.display_name, c.sent_at
+		  FROM contents c
+		  JOIN repos r ON r.slug = c.repo_slug
+		 WHERE c.deleted_at IS NULL AND r.active = 1
+		 ORDER BY c.sent_at IS NULL, c.sent_at DESC, c.content_id DESC, c.repo_slug
+		 LIMIT ?`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list content summaries: %w", err)
+	}
+	defer closeutil.Discard(rows)
+	var out []*Content
+	for rows.Next() {
+		var c Content
+		var sent sql.NullTime
+		if err := rows.Scan(&c.RepoSlug, &c.ContentID, &c.Title, &c.Preview, &c.Tags, &c.RepoName, &sent); err != nil {
+			return nil, err
+		}
+		if sent.Valid {
+			c.SentAt = sent.Time
+		}
+		out = append(out, &c)
+	}
+	return out, rows.Err()
 }
 
 func (s *sqlContentStore) GetByRepoAndID(ctx context.Context, repoSlug, contentID string) (*Content, error) {

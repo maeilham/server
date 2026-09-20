@@ -7,23 +7,26 @@ import (
 	"log/slog"
 	"net/http"
 	"regexp"
+	"strconv"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/maeilham/server/internal/content"
 	"github.com/maeilham/server/internal/store"
 )
 
-// contentGetter는 이 핸들러가 필요로 하는 조회 기능만 좁힌 인터페이스다.
+// contentReader는 이 핸들러가 필요로 하는 조회 기능만 좁힌 인터페이스다.
 // store.ContentRepository가 만족하며, 테스트에서는 작은 대역으로 바꿀 수 있다.
-type contentGetter interface {
+type contentReader interface {
 	GetByRepoAndID(ctx context.Context, repoSlug, contentID string) (*store.Content, error)
+	ListSummaries(ctx context.Context, limit int) ([]*store.Content, error)
 }
 
 // content_id는 파일명 앞 4자리 숫자다 (content/sync.go의 filenameRe와 같은 규칙).
 var contentIDRe = regexp.MustCompile(`^\d{4}$`)
 
 type contentHandler struct {
-	contents contentGetter
+	contents contentReader
 	bodies   content.BodySource
 	logger   *slog.Logger
 }
@@ -39,6 +42,61 @@ type contentResponse struct {
 	Tags          []string `json:"tags"`
 	Body          string   `json:"body"` // 마크다운 원문 (frontmatter 제외)
 	DiscussionURL string   `json:"discussionUrl,omitempty"`
+}
+
+const (
+	defaultListLimit = 50
+	maxListLimit     = 100
+)
+
+// contentSummary는 목록의 항목 하나다. 본문은 무거우므로 포함하지 않고, 상세 API로 따로 가져온다.
+type contentSummary struct {
+	Repo     string     `json:"repo"`
+	RepoName string     `json:"repoName"`
+	ID       string     `json:"id"`
+	Title    string     `json:"title"`
+	Preview  string     `json:"preview"`
+	Tags     []string   `json:"tags"`
+	SentAt   *time.Time `json:"sentAt,omitempty"` // 마지막으로 발송된 시각. 아직 발송 전이면 없다
+}
+
+// contentListResponse는 배열 대신 객체로 감싼다. 나중에 페이지 정보를 덧붙여도 호환된다.
+type contentListResponse struct {
+	Items []contentSummary `json:"items"`
+}
+
+// handleList는 GET /api/contents?limit=N 을 처리한다.
+// 발송된 글이 최근 순으로 먼저, 그 뒤에 아직 발송 전인 글이 온다. limit 기본 50, 최대 100.
+func (h *contentHandler) handleList(w http.ResponseWriter, r *http.Request) {
+	list, err := h.contents.ListSummaries(r.Context(), parseListLimit(r.URL.Query().Get("limit")))
+	if err != nil {
+		h.logger.Error("list contents", "err", err)
+		jsonError(w, "서버 오류", http.StatusInternalServerError)
+		return
+	}
+
+	items := make([]contentSummary, 0, len(list))
+	for _, c := range list {
+		s := contentSummary{
+			Repo: c.RepoSlug, RepoName: c.RepoName, ID: c.ContentID,
+			Title: c.Title, Preview: c.Preview, Tags: decodeTags(c.Tags),
+		}
+		if !c.SentAt.IsZero() {
+			sent := c.SentAt.UTC()
+			s.SentAt = &sent
+		}
+		items = append(items, s)
+	}
+	jsonOK(w, contentListResponse{Items: items})
+}
+
+// parseListLimit은 잘못된 값이나 0 이하는 기본값으로, 너무 큰 값은 상한으로 맞춘다.
+func parseListLimit(raw string) int {
+	n, err := strconv.Atoi(raw)
+	if err != nil || n <= 0 {
+		return defaultListLimit
+	}
+	return min(n, maxListLimit)
 }
 
 // handleGet은 GET /api/contents/{repo}/{id} 를 처리한다.

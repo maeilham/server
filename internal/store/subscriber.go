@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/maeilham/server/internal/pkg/closeutil"
+	"github.com/maeilham/server/internal/pkg/token"
 )
 
 type Subscriber struct {
@@ -26,6 +27,9 @@ type SubscriberRepository interface {
 	WithTx(ctx context.Context, fn func(SubscriberRepository) error) error
 
 	Upsert(ctx context.Context, email string) (int64, error)
+	// EnsureAccessToken returns the subscriber's personal-link token, creating it if none exists yet.
+	// 이미 있으면 그대로 돌려주므로 여러 번 불러도, 동시에 불러도 같은 값이다(링크를 다시 보내도 즐겨찾기가 안 깨진다).
+	EnsureAccessToken(ctx context.Context, id int64) (string, error)
 	SetConfirmed(ctx context.Context, email string) (int64, error)
 	ClearSubscriptions(ctx context.Context, id int64) error
 	AddSubscription(ctx context.Context, id int64, slug string, weight int) error
@@ -88,6 +92,29 @@ func (s *subQueries) Upsert(ctx context.Context, email string) (int64, error) {
 		return 0, fmt.Errorf("get subscriber id: %w", err)
 	}
 	return id, nil
+}
+
+func (s *subQueries) EnsureAccessToken(ctx context.Context, id int64) (string, error) {
+	tok, err := token.NewAccessToken()
+	if err != nil {
+		return "", fmt.Errorf("generate access token: %w", err)
+	}
+	// 비어 있는 경우에만 채운다. 동시에 두 요청이 와도 하나만 이기고, 진 쪽은 아래에서 이긴 값을 읽는다.
+	if _, err := s.db.ExecContext(ctx,
+		`UPDATE subscribers SET access_token = ? WHERE id = ? AND access_token IS NULL`, tok, id,
+	); err != nil {
+		return "", fmt.Errorf("set access token: %w", err)
+	}
+	var got sql.NullString
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT access_token FROM subscribers WHERE id = ?`, id,
+	).Scan(&got); err != nil {
+		return "", fmt.Errorf("get access token for subscriber %d: %w", id, err)
+	}
+	if !got.Valid {
+		return "", fmt.Errorf("subscriber %d has no access token", id)
+	}
+	return got.String, nil
 }
 
 func (s *subQueries) SetConfirmed(ctx context.Context, email string) (int64, error) {

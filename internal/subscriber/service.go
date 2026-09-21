@@ -11,29 +11,49 @@ import (
 )
 
 type SubscriberService struct {
-	repo   store.SubscriberRepository
-	mailer imail.Mailer
-	secret string
-	apiURL string
+	repo    store.SubscriberRepository
+	mailer  imail.Mailer
+	secret  string
+	apiURL  string // API 서버 주소. 옛 확인 링크(/api/confirm)에 쓴다
+	baseURL string // 웹 주소. 개인 링크(<웹>/#t=<토큰>)에 쓴다
 }
 
-func NewSubscriberService(repo store.SubscriberRepository, mailer imail.Mailer, secret, apiURL string) *SubscriberService {
-	return &SubscriberService{repo: repo, mailer: mailer, secret: secret, apiURL: apiURL}
+func NewSubscriberService(repo store.SubscriberRepository, mailer imail.Mailer, secret, apiURL, baseURL string) *SubscriberService {
+	return &SubscriberService{repo: repo, mailer: mailer, secret: secret, apiURL: apiURL, baseURL: baseURL}
 }
 
-// Subscribe reactivates or creates a subscriber and sends a confirmation email.
-// repoWeights is encoded in the confirm URL for SSH-flow subscribers; empty = all active repos.
+// PersonalLinkURL은 토큰으로 개인 링크를 만든다. 토큰은 '#' 뒤에 두어서 서버 로그나 리퍼러로 새지 않는다.
+func (s *SubscriberService) PersonalLinkURL(accessToken string) string {
+	return strings.TrimSuffix(s.baseURL, "/") + "/#t=" + accessToken
+}
+
+// Subscribe reactivates or creates a subscriber and emails them their personal link.
+//
+// 이 메일 하나가 가입 확인과 개인 링크를 겸한다(링크를 처음 여는 것이 이메일 인증).
+// 이미 가입한 주소로 다시 불러도 같은 토큰이라 같은 링크를 다시 보낸다(링크를 잃어버린 경우).
+//
+// repoWeights가 있으면(터미널의 repo 선택 흐름) 가중치를 확인 링크에 실어야 하므로 옛 확인 메일을 쓴다.
 func (s *SubscriberService) Subscribe(ctx context.Context, email string, repoWeights map[string]int) error {
 	email = strings.TrimSpace(strings.ToLower(email))
 	if err := s.repo.Reactivate(ctx, email); err != nil {
 		return err
 	}
-	if _, err := s.repo.Upsert(ctx, email); err != nil {
+	id, err := s.repo.Upsert(ctx, email)
+	if err != nil {
 		return err
 	}
-	tok := token.Make(email, s.secret)
-	confirmURL := s.buildConfirmURL(tok, repoWeights)
-	subject, text, html := imail.RenderConfirm(confirmURL)
+
+	var subject, text, html string
+	if len(repoWeights) > 0 {
+		confirmURL := s.buildConfirmURL(token.Make(email, s.secret), repoWeights)
+		subject, text, html = imail.RenderConfirm(confirmURL)
+	} else {
+		accessToken, err := s.repo.EnsureAccessToken(ctx, id)
+		if err != nil {
+			return err
+		}
+		subject, text, html = imail.RenderLink(s.PersonalLinkURL(accessToken))
+	}
 	return s.mailer.Send(ctx, imail.Message{
 		To:       email,
 		Subject:  subject,

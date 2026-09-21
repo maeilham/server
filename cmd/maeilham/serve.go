@@ -23,7 +23,7 @@ func (c *ServeCmd) Run(ctx context.Context, d *deps) error {
 		return fmt.Errorf("MAEILHAM_TZ %q: %w", d.cfg.TimeZone, err)
 	}
 
-	subSvc := subscriber.NewSubscriberService(d.subRepo, d.mailer(), d.cfg.Secret, d.cfg.APIURL)
+	subSvc := subscriber.NewSubscriberService(d.subRepo, d.mailer(), d.cfg.Secret, d.cfg.APIURL, d.cfg.BaseURL)
 
 	termSvc := terminal.NewService(subSvc, d.repoStore, d.contentStore, d.ghApp())
 	termHandler := terminal.NewHandler(termSvc)

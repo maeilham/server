@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 
@@ -10,9 +11,20 @@ import (
 	"github.com/maeilham/server/internal/pkg/token"
 )
 
+// ErrSubscriberNotFound는 개인 링크 토큰이 어떤 구독자와도 맞지 않을 때 쓴다.
+// 토큰이 아예 없는 경우와 해지한 구독자의 토큰인 경우를 이 하나로 합쳐서, 호출자가 둘을
+// 구분하지 못하게 한다(401 응답에 "해지한 사람인지"가 새지 않게 하려는 의도).
+var ErrSubscriberNotFound = errors.New("subscriber not found")
+
 type Subscriber struct {
 	ID    int64
 	Email string
+}
+
+// SubscriberSession은 개인 링크 토큰 하나가 가리키는 구독자에 대해 세션 API가 알아야 하는 것만 담는다.
+type SubscriberSession struct {
+	ID        int64
+	Confirmed bool
 }
 
 type Subscription struct {
@@ -30,6 +42,11 @@ type SubscriberRepository interface {
 	// EnsureAccessToken returns the subscriber's personal-link token, creating it if none exists yet.
 	// 이미 있으면 그대로 돌려주므로 여러 번 불러도, 동시에 불러도 같은 값이다(링크를 다시 보내도 즐겨찾기가 안 깨진다).
 	EnsureAccessToken(ctx context.Context, id int64) (string, error)
+	// SubscriberByAccessToken은 tok으로 구독자를 찾는다. 없거나 해지한 사람이면 ErrSubscriberNotFound.
+	SubscriberByAccessToken(ctx context.Context, tok string) (SubscriberSession, error)
+	// ConfirmByAccessToken은 tok 주인이 미확인이면 confirmed_at을 채운다. 이미 확인된 사람이면
+	// (id, false, nil)로 아무것도 바꾸지 않는다(멱등). 토큰이 없거나 해지 상태면 ErrSubscriberNotFound.
+	ConfirmByAccessToken(ctx context.Context, tok string) (id int64, wasNewlyConfirmed bool, err error)
 	SetConfirmed(ctx context.Context, email string) (int64, error)
 	ClearSubscriptions(ctx context.Context, id int64) error
 	AddSubscription(ctx context.Context, id int64, slug string, weight int) error
@@ -115,6 +132,57 @@ func (s *subQueries) EnsureAccessToken(ctx context.Context, id int64) (string, e
 		return "", fmt.Errorf("subscriber %d has no access token", id)
 	}
 	return got.String, nil
+}
+
+// SubscriberByAccessToken은 paused_at을 보지 않는다. 일시정지는 발송 대상 선정(ListActive/IsActive)에만
+// 쓰는 값이고, 정지된 사람도 자기 링크로 들어와 화면을 보는 것까지 막을 이유는 없다는 가정이다.
+// 나중에 다르게 정해지면 이 함수에 paused 체크만 추가하면 된다.
+func (s *subQueries) SubscriberByAccessToken(ctx context.Context, tok string) (SubscriberSession, error) {
+	var id int64
+	var confirmed, unsubscribed sql.NullTime
+	err := s.db.QueryRowContext(ctx,
+		`SELECT id, confirmed_at, unsubscribed_at FROM subscribers WHERE access_token = ?`, tok,
+	).Scan(&id, &confirmed, &unsubscribed)
+	if err == sql.ErrNoRows {
+		return SubscriberSession{}, ErrSubscriberNotFound
+	}
+	if err != nil {
+		return SubscriberSession{}, fmt.Errorf("find subscriber by access token: %w", err)
+	}
+	if unsubscribed.Valid {
+		return SubscriberSession{}, ErrSubscriberNotFound
+	}
+	return SubscriberSession{ID: id, Confirmed: confirmed.Valid}, nil
+}
+
+func (s *subQueries) ConfirmByAccessToken(ctx context.Context, tok string) (int64, bool, error) {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE subscribers SET confirmed_at = ?
+		  WHERE access_token = ? AND confirmed_at IS NULL AND unsubscribed_at IS NULL`,
+		time.Now().UTC(), tok,
+	)
+	if err != nil {
+		return 0, false, fmt.Errorf("confirm by access token: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, false, fmt.Errorf("confirm by access token: %w", err)
+	}
+	if n == 0 {
+		// 이미 확인됐거나, 토큰이 없거나, 해지 상태다. 어느 쪽인지는 같은 조회로 가려낸다.
+		sess, err := s.SubscriberByAccessToken(ctx, tok)
+		if err != nil {
+			return 0, false, err
+		}
+		return sess.ID, false, nil
+	}
+	var id int64
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT id FROM subscribers WHERE access_token = ?`, tok,
+	).Scan(&id); err != nil {
+		return 0, false, fmt.Errorf("get subscriber id for access token: %w", err)
+	}
+	return id, true, nil
 }
 
 func (s *subQueries) SetConfirmed(ctx context.Context, email string) (int64, error) {

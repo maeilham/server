@@ -1,0 +1,48 @@
+name: Deploy to OCI
+
+# 수동 버튼으로만 배포한다(main 병합과는 별개). Actions 탭에서 "Run workflow" 누르고
+# confirm에 "yes"를 입력해야 실제로 배포된다(실수로 누르는 걸 한 번 더 막는 용도).
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: '정말 배포하려면 "yes"를 입력하세요'
+        required: true
+        default: 'no'
+
+jobs:
+  deploy:
+    if: ${{ github.event.inputs.confirm == 'yes' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build & test
+        run: |
+          go build ./...
+          go vet ./...
+          go test ./... -race -count=1
+
+      - name: Cross-compile (linux/amd64, 정적 링크)
+        run: CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o bin/maeilham ./cmd/maeilham
+
+      # OCI에는 이 배포 전용으로 authorized_keys에 등록된 SSH 키로만 접속한다.
+      # 그 키는 서버에서 command="~/maeil/deploy-receive.sh"로 강제돼 있어서, 여기서
+      # 어떤 명령을 적어도(remote_cmd) 무시되고 항상 deploy-receive.sh만 실행된다.
+      # 바이너리는 그 스크립트의 표준입력으로 흘려보낸다(cat > 로 받아서 저장함).
+      # deploy-receive.sh가 자체적으로 ELF 검증 + 백업 + systemctl restart + healthz 확인까지 한다.
+      - name: Deploy via restricted SSH key
+        env:
+          DEPLOY_KEY: ${{ secrets.OCI_DEPLOY_KEY }}
+          OCI_HOST: ${{ secrets.OCI_HOST }}
+          OCI_PORT: ${{ secrets.OCI_PORT }}
+          OCI_USER: ${{ secrets.OCI_USER }}
+        run: |
+          install -m 600 /dev/null deploy_key
+          printf '%s' "$DEPLOY_KEY" > deploy_key
+          ssh -i deploy_key -o StrictHostKeyChecking=accept-new -p "$OCI_PORT" "$OCI_USER@$OCI_HOST" \
+            'ignored-because-of-forced-command' < bin/maeilham

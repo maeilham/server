@@ -14,8 +14,12 @@ var dailyHTMLTmpl string
 //go:embed confirm.html
 var confirmHTMLTmpl string
 
+//go:embed link.html
+var linkHTMLTmpl string
+
 var dailyTmpl   = template.Must(template.New("daily").Parse(dailyHTMLTmpl))
 var confirmTmpl = template.Must(template.New("confirm").Parse(confirmHTMLTmpl))
+var linkTmpl    = template.Must(template.New("link").Parse(linkHTMLTmpl))
 
 // DailyMailData carries everything a mail template needs.
 // The template package itself stays decoupled from delivery/content packages.
@@ -40,6 +44,32 @@ func RenderConfirm(confirmURL string) (subject, text, html string) {
 	var buf bytes.Buffer
 	if err := confirmTmpl.Execute(&buf, struct{ ConfirmURL string }{confirmURL}); err != nil {
 		panic("mail: confirm template execute: " + err.Error())
+	}
+	html = buf.String()
+	return
+}
+
+// RenderLink produces (subject, text, html) for the personal-link email sent when someone signs up.
+// 이 메일 하나가 가입 확인과 개인 링크를 겸한다. 링크를 처음 여는 것이 이메일 인증이다.
+func RenderLink(linkURL string) (subject, text, html string) {
+	subject = "[매일함] 나만의 링크가 도착했어요"
+	text = fmt.Sprintf(`매일함에 오신 걸 환영해요.
+
+앞으로 아래 링크로 매일함을 이용해보세요. 이 링크로 들어오면 푼 문제 기록이 저장돼요.
+링크를 처음 열면 가입이 완료됩니다.
+
+%s
+
+- 즐겨찾기(북마크)에 넣어두면 편해요.
+- 이 링크는 나만의 열쇠예요. 다른 사람에게 공유하지 마세요.
+- 매일 아침 메일은 질문이 충분히 쌓이면 시작할게요.
+
+이 메일을 요청하지 않으셨다면 무시해주세요.
+`, linkURL)
+
+	var buf bytes.Buffer
+	if err := linkTmpl.Execute(&buf, struct{ LinkURL string }{linkURL}); err != nil {
+		panic("mail: link template execute: " + err.Error())
 	}
 	html = buf.String()
 	return

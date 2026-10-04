@@ -75,6 +75,41 @@ func TestEstablishSession_FirstTimeConfirmsAndSubscribes(t *testing.T) {
 	}
 }
 
+// 운영 버그 재현: 구독은 이미 있는데 confirmed_at만 NULL이어도 500나면 안 된다.
+func TestEstablishSession_AlreadyHasSubscriptionButNotConfirmed(t *testing.T) {
+	svc, mailer, repo, _ := newTestServiceWithActiveRepo(t)
+	ctx := context.Background()
+
+	if err := svc.Subscribe(ctx, "legacy@example.com", nil); err != nil {
+		t.Fatal(err)
+	}
+	tok := linkRe.FindStringSubmatch(mailer.sent[0].TextBody)[1]
+	id, err := repo.Upsert(ctx, "legacy@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// confirmed_at은 아직 NULL인데(Subscribe는 안 건드림) 구독은 이미 있는 상태를 흉내낸다.
+	if err := repo.AddSubscription(ctx, id, "bops", 3); err != nil {
+		t.Fatal(err)
+	}
+
+	newly, err := svc.EstablishSession(ctx, tok)
+	if err != nil {
+		t.Fatalf("want no error (existing subscription should be skipped, not fail), got: %v", err)
+	}
+	if !newly {
+		t.Error("wasNewlyConfirmed = false, want true (confirmed_at was NULL before this call)")
+	}
+
+	subs, err := repo.LoadSubscriptions(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(subs) != 1 || subs[0].RepoSlug != "bops" {
+		t.Errorf("subscriptions = %+v, want exactly one unchanged row for bops", subs)
+	}
+}
+
 func TestEstablishSession_SecondCallIsNoop(t *testing.T) {
 	svc, mailer, repo, conn := newTestServiceWithActiveRepo(t)
 	ctx := context.Background()

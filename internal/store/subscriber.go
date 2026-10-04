@@ -221,9 +221,11 @@ func (s *subQueries) AddSubscription(ctx context.Context, id int64, slug string,
 	return nil
 }
 
+// AddAllActiveRepoSubscriptions는 없는 구독만 채운다. OR IGNORE가 없으면 이미 구독 중인
+// repo와 PK(subscriber_id, repo_slug) 충돌로 실패한다(해지 후 재가입 등으로 다시 호출될 수 있음).
 func (s *subQueries) AddAllActiveRepoSubscriptions(ctx context.Context, id int64) error {
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO subscriptions (subscriber_id, repo_slug, weight)
+		`INSERT OR IGNORE INTO subscriptions (subscriber_id, repo_slug, weight)
 		 SELECT ?, slug, 3 FROM repos WHERE active = 1`, id,
 	)
 	if err != nil {

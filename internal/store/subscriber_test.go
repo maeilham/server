@@ -303,3 +303,37 @@ func TestConfirmByAccessToken_ConcurrentCallsConfirmOnce(t *testing.T) {
 		t.Errorf("wasNewlyConfirmed=true count = %d, want exactly 1", count)
 	}
 }
+
+// 운영에서 실제로 터졌던 버그: 예전에 구독했던 repo가 subscriptions에 이미 남아있는 사람에게
+// (confirmed_at만 비워진 상태, 예를 들면 해지→재가입 경로) 다시 호출하면 PRIMARY KEY(subscriber_id,
+// repo_slug) 충돌로 통째로 실패했었다. 이미 있는 건 건드리지 않고 없는 것만 채워야 한다.
+func TestAddAllActiveRepoSubscriptions_SkipsAlreadyExisting(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	subs := store.NewSubscriberStore(db)
+	repos := store.NewRepoStore(db)
+
+	if err := repos.Upsert(ctx, &store.Repo{Slug: "bops", GitHubURL: "https://x", DisplayName: "bops", Active: true}); err != nil {
+		t.Fatal(err)
+	}
+	id, err := subs.Upsert(ctx, "legacy@x.co")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 예전에 이미 구독했던 걸 흉내낸다(이번 호출보다 먼저 존재).
+	if err := subs.AddSubscription(ctx, id, "bops", 3); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := subs.AddAllActiveRepoSubscriptions(ctx, id); err != nil {
+		t.Fatalf("want no error when the subscription already exists, got: %v", err)
+	}
+
+	subscriptions, err := subs.LoadSubscriptions(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(subscriptions) != 1 || subscriptions[0].RepoSlug != "bops" {
+		t.Errorf("subscriptions = %+v, want exactly one unchanged row for bops", subscriptions)
+	}
+}

@@ -75,6 +75,44 @@ func TestEstablishSession_FirstTimeConfirmsAndSubscribes(t *testing.T) {
 	}
 }
 
+// 운영 버그 재현: 예전에 구독했던 repo가 subscriptions에 이미 남아있는데 confirmed_at만 NULL인
+// 사람(해지 후 재가입 등 confirmed_at만 비우고 subscriptions는 안 지우는 경로가 있다)이 링크를
+// 열면, AddAllActiveRepoSubscriptions가 PRIMARY KEY 충돌로 500을 내고 EstablishSession 전체가
+// 롤백돼서 confirmed_at이 영원히 NULL로 남아 계속 실패하는 무한 루프였다.
+func TestEstablishSession_AlreadyHasSubscriptionButNotConfirmed(t *testing.T) {
+	svc, mailer, repo, _ := newTestServiceWithActiveRepo(t)
+	ctx := context.Background()
+
+	if err := svc.Subscribe(ctx, "legacy@example.com", nil); err != nil {
+		t.Fatal(err)
+	}
+	tok := linkRe.FindStringSubmatch(mailer.sent[0].TextBody)[1]
+	id, err := repo.Upsert(ctx, "legacy@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// confirmed_at은 아직 NULL인데(Subscribe는 안 건드림) 구독은 이미 있는 상태를 흉내낸다.
+	if err := repo.AddSubscription(ctx, id, "bops", 3); err != nil {
+		t.Fatal(err)
+	}
+
+	newly, err := svc.EstablishSession(ctx, tok)
+	if err != nil {
+		t.Fatalf("want no error (existing subscription should be skipped, not fail), got: %v", err)
+	}
+	if !newly {
+		t.Error("wasNewlyConfirmed = false, want true (confirmed_at was NULL before this call)")
+	}
+
+	subs, err := repo.LoadSubscriptions(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(subs) != 1 || subs[0].RepoSlug != "bops" {
+		t.Errorf("subscriptions = %+v, want exactly one unchanged row for bops", subs)
+	}
+}
+
 func TestEstablishSession_SecondCallIsNoop(t *testing.T) {
 	svc, mailer, repo, conn := newTestServiceWithActiveRepo(t)
 	ctx := context.Background()

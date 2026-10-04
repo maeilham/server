@@ -120,6 +120,9 @@ func TestSubscriberByAccessToken_Found(t *testing.T) {
 	if sess.ID != id {
 		t.Errorf("ID = %d, want %d", sess.ID, id)
 	}
+	if sess.Email != "a@x.co" {
+		t.Errorf("Email = %q, want a@x.co", sess.Email)
+	}
 	if sess.Confirmed {
 		t.Error("Confirmed = true, want false (just upserted, never confirmed)")
 	}

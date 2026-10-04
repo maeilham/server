@@ -162,6 +162,9 @@ func TestMe_ValidConfirmedToken(t *testing.T) {
 	if out.Status != "subscriber" {
 		t.Errorf("status field = %q, want subscriber", out.Status)
 	}
+	if out.Email != "me@example.com" {
+		t.Errorf("email = %q, want me@example.com", out.Email)
+	}
 }
 
 func TestMe_UnconfirmedTokenIsUnauthorizedAndNeverMutates(t *testing.T) {

@@ -40,25 +40,26 @@ func (s *SubscriberService) EstablishSession(ctx context.Context, tok string) (w
 	return newly, nil
 }
 
-// SessionStatus는 tok을 검증만 한다(부작용 없음). 아직 확인되지 않은 구독자는 401로 취급한다.
+// SessionStatus는 tok을 검증만 하고(부작용 없음) 그 구독자의 이메일을 돌려준다.
+// 아직 확인되지 않은 구독자는 401로 취급한다.
 // 실제 웹 흐름에서는 EstablishSession이 먼저 성공해야 토큰이 브라우저에 저장되므로, 정상적인
 // 경우라면 여기 걸릴 일이 없다.
 //
 // paused_at은 여기서도 보지 않는다(EstablishSession, SubscriberByAccessToken과 같은 가정 —
 // 일시정지는 발송 대상 선정에만 쓰는 값이라는 전제. 다르게 정해지면 store 계층만 고치면 된다).
-func (s *SubscriberService) SessionStatus(ctx context.Context, tok string) error {
+func (s *SubscriberService) SessionStatus(ctx context.Context, tok string) (email string, err error) {
 	if !token.IsAccessToken(tok) {
-		return ErrUnauthorized
+		return "", ErrUnauthorized
 	}
 	sess, err := s.repo.SubscriberByAccessToken(ctx, tok)
 	if errors.Is(err, store.ErrSubscriberNotFound) {
-		return ErrUnauthorized
+		return "", ErrUnauthorized
 	}
 	if err != nil {
-		return err
+		return "", err
 	}
 	if !sess.Confirmed {
-		return ErrUnauthorized
+		return "", ErrUnauthorized
 	}
-	return nil
+	return sess.Email, nil
 }

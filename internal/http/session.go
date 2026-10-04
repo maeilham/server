@@ -35,6 +35,7 @@ type sessionResponse struct {
 
 type meResponse struct {
 	Status string `json:"status"`
+	Email  string `json:"email"`
 }
 
 // handleSession은 POST /api/session을 처리한다. 개인 링크를 처음 열면 가입을 완료시키고,
@@ -59,14 +60,14 @@ func (h *sessionHandler) handleSession(w http.ResponseWriter, r *http.Request) {
 	jsonOK(w, sessionResponse{Status: "subscriber", NewlyConfirmed: newly})
 }
 
-// handleMe는 GET /api/me를 처리한다. 부작용 없이 토큰 상태만 확인한다. 상태 코드: 200 / 401 / 500
+// handleMe는 GET /api/me를 처리한다. 부작용 없이 토큰 상태를 확인하고 이메일을 돌려준다. 상태 코드: 200 / 401 / 500
 func (h *sessionHandler) handleMe(w http.ResponseWriter, r *http.Request) {
 	tok, ok := bearerToken(r)
 	if !ok {
 		jsonError(w, "인증이 필요합니다", http.StatusUnauthorized)
 		return
 	}
-	err := h.subSvc.SessionStatus(r.Context(), tok)
+	email, err := h.subSvc.SessionStatus(r.Context(), tok)
 	switch {
 	case err == nil:
 	case errors.Is(err, subscriber.ErrUnauthorized):
@@ -77,5 +78,5 @@ func (h *sessionHandler) handleMe(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "서버 오류", http.StatusInternalServerError)
 		return
 	}
-	jsonOK(w, meResponse{Status: "subscriber"})
+	jsonOK(w, meResponse{Status: "subscriber", Email: email})
 }

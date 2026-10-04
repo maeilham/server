@@ -24,6 +24,7 @@ type Subscriber struct {
 // SubscriberSession은 개인 링크 토큰 하나가 가리키는 구독자에 대해 세션 API가 알아야 하는 것만 담는다.
 type SubscriberSession struct {
 	ID        int64
+	Email     string
 	Confirmed bool
 }
 
@@ -139,10 +140,11 @@ func (s *subQueries) EnsureAccessToken(ctx context.Context, id int64) (string, e
 // 나중에 다르게 정해지면 이 함수에 paused 체크만 추가하면 된다.
 func (s *subQueries) SubscriberByAccessToken(ctx context.Context, tok string) (SubscriberSession, error) {
 	var id int64
+	var email string
 	var confirmed, unsubscribed sql.NullTime
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, confirmed_at, unsubscribed_at FROM subscribers WHERE access_token = ?`, tok,
-	).Scan(&id, &confirmed, &unsubscribed)
+		`SELECT id, email, confirmed_at, unsubscribed_at FROM subscribers WHERE access_token = ?`, tok,
+	).Scan(&id, &email, &confirmed, &unsubscribed)
 	if err == sql.ErrNoRows {
 		return SubscriberSession{}, ErrSubscriberNotFound
 	}
@@ -152,7 +154,7 @@ func (s *subQueries) SubscriberByAccessToken(ctx context.Context, tok string) (S
 	if unsubscribed.Valid {
 		return SubscriberSession{}, ErrSubscriberNotFound
 	}
-	return SubscriberSession{ID: id, Confirmed: confirmed.Valid}, nil
+	return SubscriberSession{ID: id, Email: email, Confirmed: confirmed.Valid}, nil
 }
 
 func (s *subQueries) ConfirmByAccessToken(ctx context.Context, tok string) (int64, bool, error) {

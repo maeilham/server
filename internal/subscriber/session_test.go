@@ -206,8 +206,12 @@ func TestSessionStatus_ValidConfirmedToken(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := svc.SessionStatus(ctx, tok); err != nil {
+	email, err := svc.SessionStatus(ctx, tok)
+	if err != nil {
 		t.Errorf("err = %v, want nil", err)
+	}
+	if email != "me@example.com" {
+		t.Errorf("email = %q, want me@example.com", email)
 	}
 }
 
@@ -220,7 +224,7 @@ func TestSessionStatus_UnconfirmedTokenIsUnauthorized(t *testing.T) {
 	}
 	tok := linkRe.FindStringSubmatch(mailer.sent[0].TextBody)[1]
 
-	if err := svc.SessionStatus(ctx, tok); !errors.Is(err, ErrUnauthorized) {
+	if _, err := svc.SessionStatus(ctx, tok); !errors.Is(err, ErrUnauthorized) {
 		t.Errorf("err = %v, want ErrUnauthorized", err)
 	}
 	if _, confirmed := row("me@example.com"); confirmed {
@@ -231,7 +235,7 @@ func TestSessionStatus_UnconfirmedTokenIsUnauthorized(t *testing.T) {
 func TestSessionStatus_UnknownToken(t *testing.T) {
 	svc, _, _, _ := newTestService(t)
 	unknown := "abcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcd"
-	if err := svc.SessionStatus(context.Background(), unknown); !errors.Is(err, ErrUnauthorized) {
+	if _, err := svc.SessionStatus(context.Background(), unknown); !errors.Is(err, ErrUnauthorized) {
 		t.Errorf("err = %v, want ErrUnauthorized", err)
 	}
 }
@@ -251,7 +255,7 @@ func TestSessionStatus_Unsubscribed(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := svc.SessionStatus(ctx, tok); !errors.Is(err, ErrUnauthorized) {
+	if _, err := svc.SessionStatus(ctx, tok); !errors.Is(err, ErrUnauthorized) {
 		t.Errorf("err = %v, want ErrUnauthorized", err)
 	}
 }

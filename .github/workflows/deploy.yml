@@ -43,6 +43,8 @@ jobs:
           OCI_USER: ${{ secrets.OCI_USER }}
         run: |
           install -m 600 /dev/null deploy_key
-          printf '%s' "$DEPLOY_KEY" > deploy_key
+          # GitHub Secrets가 저장할 때 끝 줄바꿈을 잘라내서, printf '%s'만 쓰면 OpenSSH 키 파일이
+          # 줄바꿈 없이 끝나 "error in libcrypto"로 깨진다. \n을 다시 붙여줘야 한다.
+          printf '%s\n' "$DEPLOY_KEY" > deploy_key
           ssh -i deploy_key -o StrictHostKeyChecking=accept-new -p "$OCI_PORT" "$OCI_USER@$OCI_HOST" \
             'ignored-because-of-forced-command' < bin/maeilham

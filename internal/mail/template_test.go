@@ -36,3 +36,37 @@ func TestRenderLink_EscapesUnsafeURL(t *testing.T) {
 		t.Error("link URL was injected into the html unescaped")
 	}
 }
+
+func TestRenderRotatedLink(t *testing.T) {
+	const link = "https://web.example/#t=abc123"
+	subject, text, html := RenderRotatedLink(link)
+
+	if subject == "" {
+		t.Error("subject is empty")
+	}
+	if !strings.Contains(text, link) {
+		t.Errorf("text body has no link:\n%s", text)
+	}
+	if want := `href="` + link + `"`; !strings.Contains(html, want) {
+		t.Errorf("html body does not contain %s", want)
+	}
+	// 가입 메일 문구가 남으면 기존 구독자가 "처음 가입"으로 오해한다
+	for name, body := range map[string]string{"text": text, "html": html} {
+		if strings.Contains(body, "환영") || strings.Contains(body, "가입이 완료") {
+			t.Errorf("%s body still has signup wording", name)
+		}
+		if !strings.Contains(body, "이전 링크는 이제 쓸 수 없") {
+			t.Errorf("%s body does not say the old link stopped working", name)
+		}
+		if !strings.Contains(body, "공유하지 마세요") {
+			t.Errorf("%s body has no warning against sharing the link", name)
+		}
+	}
+}
+
+func TestRenderRotatedLink_EscapesUnsafeURL(t *testing.T) {
+	_, _, html := RenderRotatedLink(`https://web.example/#t="><script>alert(1)</script>`)
+	if strings.Contains(html, "<script>") {
+		t.Error("link URL was injected into the html unescaped")
+	}
+}

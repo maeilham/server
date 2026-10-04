@@ -17,9 +17,13 @@ var confirmHTMLTmpl string
 //go:embed link.html
 var linkHTMLTmpl string
 
+//go:embed link_rotated.html
+var linkRotatedHTMLTmpl string
+
 var dailyTmpl   = template.Must(template.New("daily").Parse(dailyHTMLTmpl))
 var confirmTmpl = template.Must(template.New("confirm").Parse(confirmHTMLTmpl))
 var linkTmpl    = template.Must(template.New("link").Parse(linkHTMLTmpl))
+var linkRotatedTmpl = template.Must(template.New("link_rotated").Parse(linkRotatedHTMLTmpl))
 
 // DailyMailData carries everything a mail template needs.
 // The template package itself stays decoupled from delivery/content packages.
@@ -70,6 +74,30 @@ func RenderLink(linkURL string) (subject, text, html string) {
 	var buf bytes.Buffer
 	if err := linkTmpl.Execute(&buf, struct{ LinkURL string }{linkURL}); err != nil {
 		panic("mail: link template execute: " + err.Error())
+	}
+	html = buf.String()
+	return
+}
+
+// RenderRotatedLink produces (subject, text, html) for the email sent when a subscriber regenerates their personal link.
+// 새 링크는 응답이 아니라 이 메일로만 전달된다(링크가 유출돼 누가 재발급을 눌러도 새 링크는 주인만 받는다).
+func RenderRotatedLink(linkURL string) (subject, text, html string) {
+	subject = "[매일함] 새 링크가 도착했어요"
+	text = fmt.Sprintf(`'내 링크 다시 만들기'가 요청돼서 새 링크를 보내요.
+이전 링크는 이제 쓸 수 없어요. 아래 링크로 다시 들어와 주세요.
+
+%s
+
+- 북마크와 홈 화면 바로가기는 이 새 링크로 바꿔주세요.
+- 이 링크는 나만의 열쇠예요. 다른 사람에게 공유하지 마세요.
+
+직접 요청하신 게 아니라면 이전 링크가 다른 사람에게 알려졌을 수 있어요.
+이전 링크는 이제 쓸 수 없으니 걱정하지 않으셔도 돼요.
+`, linkURL)
+
+	var buf bytes.Buffer
+	if err := linkRotatedTmpl.Execute(&buf, struct{ LinkURL string }{linkURL}); err != nil {
+		panic("mail: link_rotated template execute: " + err.Error())
 	}
 	html = buf.String()
 	return

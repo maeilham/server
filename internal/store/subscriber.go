@@ -74,6 +74,9 @@ type SubscriberRepository interface {
 	// SetRepoSubscription은 id의 slug 구독을 켜거나(없을 때만 기본 가중치로 추가) 끈다. 이미 원하는 상태여도
 	// 성공이다(멱등). slug가 없거나 비활성 repo면 ErrRepoNotFound.
 	SetRepoSubscription(ctx context.Context, id int64, slug string, enabled bool) error
+	// ReplaceAccessToken은 개인 링크 토큰 oldTok을 newTok으로 바꾼다. oldTok이 그대로일 때만 바꾸므로(조건부 UPDATE)
+	// 같은 토큰으로 동시에 불러도 하나만 이긴다. 확인을 마치고 해지하지 않은 구독자가 아니면 ErrSubscriberNotFound.
+	ReplaceAccessToken(ctx context.Context, oldTok, newTok string) error
 }
 
 // subQueries holds all single-query method implementations, shared by both store types.
@@ -380,6 +383,25 @@ func (s *subQueries) SetRepoSubscription(ctx context.Context, id int64, slug str
 	}
 	if err != nil {
 		return fmt.Errorf("set subscription %s: %w", slug, err)
+	}
+	return nil
+}
+
+func (s *subQueries) ReplaceAccessToken(ctx context.Context, oldTok, newTok string) error {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE subscribers SET access_token = ?
+		  WHERE access_token = ? AND confirmed_at IS NOT NULL AND unsubscribed_at IS NULL`,
+		newTok, oldTok,
+	)
+	if err != nil {
+		return fmt.Errorf("replace access token: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("replace access token: %w", err)
+	}
+	if n == 0 {
+		return ErrSubscriberNotFound
 	}
 	return nil
 }

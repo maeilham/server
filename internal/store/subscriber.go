@@ -63,6 +63,7 @@ type SubscriberRepository interface {
 	ClearSubscriptions(ctx context.Context, id int64) error
 	AddSubscription(ctx context.Context, id int64, slug string, weight int) error
 	AddAllActiveRepoSubscriptions(ctx context.Context, id int64) error
+	// Reactivate는 해지한 구독자를 가입 대기로 돌리고 개인 링크 토큰을 비운다(옛 링크는 되살아나지 않는다).
 	Reactivate(ctx context.Context, email string) error
 	Unsubscribe(ctx context.Context, email string) error
 	IsUnsubscribed(ctx context.Context, email string) (bool, error)
@@ -255,9 +256,12 @@ func (s *subQueries) AddAllActiveRepoSubscriptions(ctx context.Context, id int64
 	return nil
 }
 
+// Reactivate는 해지한 구독자를 다시 가입 대기 상태로 돌린다. 개인 링크 토큰도 비워서(NULL) 옛 링크가
+// 되살아나지 않게 한다 — 해지 전에 유출된 링크로 다시 들어올 수 없고, 호출한 쪽이 EnsureAccessToken으로
+// 새 토큰을 만들어 보낸다. 해지하지 않은 구독자는 건드리지 않는다.
 func (s *subQueries) Reactivate(ctx context.Context, email string) error {
 	_, err := s.db.ExecContext(ctx,
-		`UPDATE subscribers SET unsubscribed_at = NULL, confirmed_at = NULL
+		`UPDATE subscribers SET unsubscribed_at = NULL, confirmed_at = NULL, access_token = NULL
 		  WHERE email = ? AND unsubscribed_at IS NOT NULL`, email,
 	)
 	return err

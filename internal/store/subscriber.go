@@ -16,6 +16,9 @@ import (
 // 구분하지 못하게 한다(401 응답에 "해지한 사람인지"가 새지 않게 하려는 의도).
 var ErrSubscriberNotFound = errors.New("subscriber not found")
 
+// ErrRepoNotFound는 구독을 바꾸려는 repo가 없거나 비활성일 때 쓴다.
+var ErrRepoNotFound = errors.New("repo not found")
+
 type Subscriber struct {
 	ID    int64
 	Email string
@@ -24,7 +27,16 @@ type Subscriber struct {
 // SubscriberSession은 개인 링크 토큰 하나가 가리키는 구독자에 대해 세션 API가 알아야 하는 것만 담는다.
 type SubscriberSession struct {
 	ID        int64
+	Email     string
 	Confirmed bool
+}
+
+// RepoSubscription은 활성 repo 하나와 특정 구독자의 구독 여부다(설정 화면용).
+type RepoSubscription struct {
+	Slug        string
+	Name        string
+	Description string
+	Enabled     bool
 }
 
 type Subscription struct {
@@ -57,6 +69,11 @@ type SubscriberRepository interface {
 	ListActive(ctx context.Context) ([]Subscriber, error)
 	IsActive(ctx context.Context, id int64) (bool, error)
 	LoadSubscriptions(ctx context.Context, id int64) ([]Subscription, error)
+	// ListRepoSubscriptions는 활성 repo 전체를 slug 순으로 돌려주고, id가 구독 중인 repo는 Enabled=true로 표시한다.
+	ListRepoSubscriptions(ctx context.Context, id int64) ([]RepoSubscription, error)
+	// SetRepoSubscription은 id의 slug 구독을 켜거나(없을 때만 기본 가중치로 추가) 끈다. 이미 원하는 상태여도
+	// 성공이다(멱등). slug가 없거나 비활성 repo면 ErrRepoNotFound.
+	SetRepoSubscription(ctx context.Context, id int64, slug string, enabled bool) error
 }
 
 // subQueries holds all single-query method implementations, shared by both store types.
@@ -139,10 +156,11 @@ func (s *subQueries) EnsureAccessToken(ctx context.Context, id int64) (string, e
 // 나중에 다르게 정해지면 이 함수에 paused 체크만 추가하면 된다.
 func (s *subQueries) SubscriberByAccessToken(ctx context.Context, tok string) (SubscriberSession, error) {
 	var id int64
+	var email string
 	var confirmed, unsubscribed sql.NullTime
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, confirmed_at, unsubscribed_at FROM subscribers WHERE access_token = ?`, tok,
-	).Scan(&id, &confirmed, &unsubscribed)
+		`SELECT id, email, confirmed_at, unsubscribed_at FROM subscribers WHERE access_token = ?`, tok,
+	).Scan(&id, &email, &confirmed, &unsubscribed)
 	if err == sql.ErrNoRows {
 		return SubscriberSession{}, ErrSubscriberNotFound
 	}
@@ -152,7 +170,7 @@ func (s *subQueries) SubscriberByAccessToken(ctx context.Context, tok string) (S
 	if unsubscribed.Valid {
 		return SubscriberSession{}, ErrSubscriberNotFound
 	}
-	return SubscriberSession{ID: id, Confirmed: confirmed.Valid}, nil
+	return SubscriberSession{ID: id, Email: email, Confirmed: confirmed.Valid}, nil
 }
 
 func (s *subQueries) ConfirmByAccessToken(ctx context.Context, tok string) (int64, bool, error) {
@@ -320,4 +338,48 @@ func (s *subQueries) LoadSubscriptions(ctx context.Context, id int64) ([]Subscri
 		out = append(out, sub)
 	}
 	return out, rows.Err()
+}
+
+func (s *subQueries) ListRepoSubscriptions(ctx context.Context, id int64) ([]RepoSubscription, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT r.slug, r.display_name, COALESCE(r.description, ''), s.subscriber_id IS NOT NULL
+		  FROM repos r
+		  LEFT JOIN subscriptions s ON s.repo_slug = r.slug AND s.subscriber_id = ?
+		 WHERE r.active = 1
+		 ORDER BY r.slug`, id)
+	if err != nil {
+		return nil, fmt.Errorf("list repo subscriptions: %w", err)
+	}
+	defer closeutil.Discard(rows)
+	var out []RepoSubscription
+	for rows.Next() {
+		var rs RepoSubscription
+		if err := rows.Scan(&rs.Slug, &rs.Name, &rs.Description, &rs.Enabled); err != nil {
+			return nil, err
+		}
+		out = append(out, rs)
+	}
+	return out, rows.Err()
+}
+
+func (s *subQueries) SetRepoSubscription(ctx context.Context, id int64, slug string, enabled bool) error {
+	var one int
+	err := s.db.QueryRowContext(ctx, `SELECT 1 FROM repos WHERE slug = ? AND active = 1`, slug).Scan(&one)
+	if err == sql.ErrNoRows {
+		return ErrRepoNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("find repo %s: %w", slug, err)
+	}
+	if enabled {
+		_, err = s.db.ExecContext(ctx,
+			`INSERT OR IGNORE INTO subscriptions (subscriber_id, repo_slug, weight) VALUES (?, ?, 3)`, id, slug)
+	} else {
+		_, err = s.db.ExecContext(ctx,
+			`DELETE FROM subscriptions WHERE subscriber_id = ? AND repo_slug = ?`, id, slug)
+	}
+	if err != nil {
+		return fmt.Errorf("set subscription %s: %w", slug, err)
+	}
+	return nil
 }

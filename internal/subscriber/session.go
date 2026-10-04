@@ -91,3 +91,14 @@ func (s *SubscriberService) SetRepoSubscription(ctx context.Context, tok, slug s
 	}
 	return s.repo.SetRepoSubscription(ctx, sess.ID, slug, enabled)
 }
+
+// UnsubscribeSession은 tok(개인 링크 토큰) 주인의 구독을 해지한다. 메일 하단 해지 링크(Unsubscribe)와
+// 결과는 같고 인증 수단만 다르다. 해지하면 이 토큰은 이후 ErrUnauthorized가 되므로, 같은 요청을
+// 다시 보내면 401이다(멱등이 아니다).
+func (s *SubscriberService) UnsubscribeSession(ctx context.Context, tok string) error {
+	sess, err := s.authenticate(ctx, tok)
+	if err != nil {
+		return err
+	}
+	return s.repo.Unsubscribe(ctx, sess.Email)
+}

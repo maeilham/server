@@ -51,6 +51,7 @@ func NewRouter(deps Deps) http.Handler {
 	r.Get("/api/me", sess.handleMe)
 	r.Get("/api/me/subscriptions", sess.handleSubscriptions)
 	r.Put("/api/me/subscriptions/{repo}", sess.handleSetSubscription)
+	r.Post("/api/me/unsubscribe", sess.handleUnsubscribeMe)
 
 	contents := &contentHandler{contents: deps.Contents, bodies: deps.Bodies, logger: deps.Logger}
 	today := &todayHandler{picker: deps.Today, logger: deps.Logger}

@@ -399,3 +399,55 @@ func TestCORS_AllowsPut(t *testing.T) {
 		t.Errorf("Access-Control-Allow-Methods = %q, want it to include PUT", got)
 	}
 }
+
+func TestUnsubscribeMe_UnsubscribesAndInvalidatesToken(t *testing.T) {
+	h, mailer, conn := newSessionRouter(t)
+	tok := subscribeAndExtractToken(t, h, mailer, "me@example.com")
+	if rec := doWithBearer(h, http.MethodPost, "/api/session", tok); rec.Code != http.StatusOK {
+		t.Fatalf("establish: status = %d, body %s", rec.Code, rec.Body)
+	}
+	otherTok := subscribeAndExtractToken(t, h, mailer, "other@example.com")
+	if rec := doWithBearer(h, http.MethodPost, "/api/session", otherTok); rec.Code != http.StatusOK {
+		t.Fatalf("establish other: status = %d, body %s", rec.Code, rec.Body)
+	}
+
+	if rec := doWithBearer(h, http.MethodPost, "/api/me/unsubscribe", tok); rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body %s", rec.Code, rec.Body)
+	}
+
+	var unsubscribed bool
+	if err := conn.QueryRow(`SELECT unsubscribed_at IS NOT NULL FROM subscribers WHERE email = 'me@example.com'`).Scan(&unsubscribed); err != nil || !unsubscribed {
+		t.Errorf("unsubscribed_at set = %v (err %v), want true", unsubscribed, err)
+	}
+	// 같은 토큰은 이제 401이고, 요청을 다시 보내도 401이다
+	if rec := doWithBearer(h, http.MethodGet, "/api/me", tok); rec.Code != http.StatusUnauthorized {
+		t.Errorf("/api/me after unsubscribe: status = %d, want 401", rec.Code)
+	}
+	if rec := doWithBearer(h, http.MethodPost, "/api/me/unsubscribe", tok); rec.Code != http.StatusUnauthorized {
+		t.Errorf("second unsubscribe: status = %d, want 401", rec.Code)
+	}
+	// 다른 구독자는 그대로다
+	if rec := doWithBearer(h, http.MethodGet, "/api/me", otherTok); rec.Code != http.StatusOK {
+		t.Errorf("other subscriber: status = %d, want 200", rec.Code)
+	}
+}
+
+func TestUnsubscribeMe_Unauthorized(t *testing.T) {
+	h, mailer, conn := newSessionRouter(t)
+	unconfirmed := subscribeAndExtractToken(t, h, mailer, "me@example.com") // 링크를 아직 안 열었다
+
+	for name, tok := range map[string]string{
+		"no token":    "",
+		"malformed":   "not-hex-at-all",
+		"unknown":     "abcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcd",
+		"unconfirmed": unconfirmed,
+	} {
+		if rec := doWithBearer(h, http.MethodPost, "/api/me/unsubscribe", tok); rec.Code != http.StatusUnauthorized {
+			t.Errorf("%s: status = %d, want 401", name, rec.Code)
+		}
+	}
+	var unsubscribed bool
+	if err := conn.QueryRow(`SELECT unsubscribed_at IS NOT NULL FROM subscribers WHERE email = 'me@example.com'`).Scan(&unsubscribed); err != nil || unsubscribed {
+		t.Errorf("unsubscribed_at set = %v (err %v), want false: a rejected request must not unsubscribe", unsubscribed, err)
+	}
+}

@@ -159,3 +159,25 @@ func (h *sessionHandler) handleSetSubscription(w http.ResponseWriter, r *http.Re
 	}
 	jsonOK(w, setSubscriptionResponse{Repo: slug, Enabled: *req.Enabled})
 }
+
+// handleUnsubscribeMe는 POST /api/me/unsubscribe를 처리한다. 개인 링크 토큰으로 구독을 해지한다.
+// 해지 뒤에는 그 토큰이 401이라 같은 요청을 다시 보내도 401이다. 상태 코드: 200 / 401 / 500
+func (h *sessionHandler) handleUnsubscribeMe(w http.ResponseWriter, r *http.Request) {
+	tok, ok := bearerToken(r)
+	if !ok {
+		jsonError(w, "인증이 필요합니다", http.StatusUnauthorized)
+		return
+	}
+	err := h.subSvc.UnsubscribeSession(r.Context(), tok)
+	switch {
+	case err == nil:
+	case errors.Is(err, subscriber.ErrUnauthorized):
+		jsonError(w, "유효하지 않은 링크입니다", http.StatusUnauthorized)
+		return
+	default:
+		h.logger.Error("unsubscribe session", "err", err)
+		jsonError(w, "서버 오류", http.StatusInternalServerError)
+		return
+	}
+	jsonOK(w, map[string]string{"message": "구독이 해지되었습니다"})
+}

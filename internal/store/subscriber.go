@@ -221,11 +221,8 @@ func (s *subQueries) AddSubscription(ctx context.Context, id int64, slug string,
 	return nil
 }
 
-// AddAllActiveRepoSubscriptions는 그 구독자에게 없는 활성 repo 구독만 채운다. OR IGNORE인 이유:
-// (subscriber_id, repo_slug)가 PK라서, 예전에 구독했던 repo가 이미 남아있는 사람(해지 후 재가입 등
-// confirmed_at만 비워지고 subscriptions는 안 지워지는 경로가 있다)에게 다시 호출하면 그대로
-// 실패했었다(EstablishSession이 confirmed_at만 보고 "처음"이라고 오판해서 호출하는 경우).
-// 이미 있는 구독은 건드리지 않고 없는 것만 채우는 게 의도이므로 OR IGNORE가 맞는 동작이다.
+// AddAllActiveRepoSubscriptions는 없는 구독만 채운다. OR IGNORE가 없으면 이미 구독 중인
+// repo와 PK(subscriber_id, repo_slug) 충돌로 실패한다(해지 후 재가입 등으로 다시 호출될 수 있음).
 func (s *subQueries) AddAllActiveRepoSubscriptions(ctx context.Context, id int64) error {
 	_, err := s.db.ExecContext(ctx,
 		`INSERT OR IGNORE INTO subscriptions (subscriber_id, repo_slug, weight)

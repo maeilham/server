@@ -75,10 +75,7 @@ func TestEstablishSession_FirstTimeConfirmsAndSubscribes(t *testing.T) {
 	}
 }
 
-// 운영 버그 재현: 예전에 구독했던 repo가 subscriptions에 이미 남아있는데 confirmed_at만 NULL인
-// 사람(해지 후 재가입 등 confirmed_at만 비우고 subscriptions는 안 지우는 경로가 있다)이 링크를
-// 열면, AddAllActiveRepoSubscriptions가 PRIMARY KEY 충돌로 500을 내고 EstablishSession 전체가
-// 롤백돼서 confirmed_at이 영원히 NULL로 남아 계속 실패하는 무한 루프였다.
+// 운영 버그 재현: 구독은 이미 있는데 confirmed_at만 NULL이어도 500나면 안 된다.
 func TestEstablishSession_AlreadyHasSubscriptionButNotConfirmed(t *testing.T) {
 	svc, mailer, repo, _ := newTestServiceWithActiveRepo(t)
 	ctx := context.Background()

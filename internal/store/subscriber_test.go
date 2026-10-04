@@ -304,9 +304,7 @@ func TestConfirmByAccessToken_ConcurrentCallsConfirmOnce(t *testing.T) {
 	}
 }
 
-// 운영에서 실제로 터졌던 버그: 예전에 구독했던 repo가 subscriptions에 이미 남아있는 사람에게
-// (confirmed_at만 비워진 상태, 예를 들면 해지→재가입 경로) 다시 호출하면 PRIMARY KEY(subscriber_id,
-// repo_slug) 충돌로 통째로 실패했었다. 이미 있는 건 건드리지 않고 없는 것만 채워야 한다.
+// 운영 버그 재현: 이미 구독 중인 repo가 있어도 실패하면 안 된다.
 func TestAddAllActiveRepoSubscriptions_SkipsAlreadyExisting(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)

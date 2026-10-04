@@ -28,6 +28,14 @@ type SubscriberSession struct {
 	Confirmed bool
 }
 
+// RepoSubscription은 활성 repo 하나와 특정 구독자의 구독 여부다(설정 화면용).
+type RepoSubscription struct {
+	Slug        string
+	Name        string
+	Description string
+	Enabled     bool
+}
+
 type Subscription struct {
 	RepoSlug string
 	Weight   int
@@ -58,6 +66,8 @@ type SubscriberRepository interface {
 	ListActive(ctx context.Context) ([]Subscriber, error)
 	IsActive(ctx context.Context, id int64) (bool, error)
 	LoadSubscriptions(ctx context.Context, id int64) ([]Subscription, error)
+	// ListRepoSubscriptions는 활성 repo 전체를 slug 순으로 돌려주고, id가 구독 중인 repo는 Enabled=true로 표시한다.
+	ListRepoSubscriptions(ctx context.Context, id int64) ([]RepoSubscription, error)
 }
 
 // subQueries holds all single-query method implementations, shared by both store types.
@@ -320,6 +330,28 @@ func (s *subQueries) LoadSubscriptions(ctx context.Context, id int64) ([]Subscri
 			return nil, err
 		}
 		out = append(out, sub)
+	}
+	return out, rows.Err()
+}
+
+func (s *subQueries) ListRepoSubscriptions(ctx context.Context, id int64) ([]RepoSubscription, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT r.slug, r.display_name, COALESCE(r.description, ''), s.subscriber_id IS NOT NULL
+		  FROM repos r
+		  LEFT JOIN subscriptions s ON s.repo_slug = r.slug AND s.subscriber_id = ?
+		 WHERE r.active = 1
+		 ORDER BY r.slug`, id)
+	if err != nil {
+		return nil, fmt.Errorf("list repo subscriptions: %w", err)
+	}
+	defer closeutil.Discard(rows)
+	var out []RepoSubscription
+	for rows.Next() {
+		var rs RepoSubscription
+		if err := rows.Scan(&rs.Slug, &rs.Name, &rs.Description, &rs.Enabled); err != nil {
+			return nil, err
+		}
+		out = append(out, rs)
 	}
 	return out, rows.Err()
 }

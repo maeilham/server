@@ -40,6 +40,25 @@ func (s *SubscriberService) EstablishSession(ctx context.Context, tok string) (w
 	return newly, nil
 }
 
+// authenticate는 tok이 확인을 마친 구독자의 개인 링크 토큰인지 검증한다(부작용 없음).
+// 형식이 틀리거나, 모르는 토큰이거나, 해지했거나, 아직 확인 전이면 ErrUnauthorized다.
+func (s *SubscriberService) authenticate(ctx context.Context, tok string) (store.SubscriberSession, error) {
+	if !token.IsAccessToken(tok) {
+		return store.SubscriberSession{}, ErrUnauthorized
+	}
+	sess, err := s.repo.SubscriberByAccessToken(ctx, tok)
+	if errors.Is(err, store.ErrSubscriberNotFound) {
+		return store.SubscriberSession{}, ErrUnauthorized
+	}
+	if err != nil {
+		return store.SubscriberSession{}, err
+	}
+	if !sess.Confirmed {
+		return store.SubscriberSession{}, ErrUnauthorized
+	}
+	return sess, nil
+}
+
 // SessionStatus는 tok을 검증만 하고(부작용 없음) 그 구독자의 이메일을 돌려준다.
 // 아직 확인되지 않은 구독자는 401로 취급한다.
 // 실제 웹 흐름에서는 EstablishSession이 먼저 성공해야 토큰이 브라우저에 저장되므로, 정상적인
@@ -48,18 +67,18 @@ func (s *SubscriberService) EstablishSession(ctx context.Context, tok string) (w
 // paused_at은 여기서도 보지 않는다(EstablishSession, SubscriberByAccessToken과 같은 가정 —
 // 일시정지는 발송 대상 선정에만 쓰는 값이라는 전제. 다르게 정해지면 store 계층만 고치면 된다).
 func (s *SubscriberService) SessionStatus(ctx context.Context, tok string) (email string, err error) {
-	if !token.IsAccessToken(tok) {
-		return "", ErrUnauthorized
-	}
-	sess, err := s.repo.SubscriberByAccessToken(ctx, tok)
-	if errors.Is(err, store.ErrSubscriberNotFound) {
-		return "", ErrUnauthorized
-	}
+	sess, err := s.authenticate(ctx, tok)
 	if err != nil {
 		return "", err
 	}
-	if !sess.Confirmed {
-		return "", ErrUnauthorized
-	}
 	return sess.Email, nil
+}
+
+// RepoSubscriptions는 tok 주인에게 보여줄 활성 repo 전체와 각 repo의 구독 여부를 돌려준다.
+func (s *SubscriberService) RepoSubscriptions(ctx context.Context, tok string) ([]store.RepoSubscription, error) {
+	sess, err := s.authenticate(ctx, tok)
+	if err != nil {
+		return nil, err
+	}
+	return s.repo.ListRepoSubscriptions(ctx, sess.ID)
 }

@@ -49,6 +49,7 @@ func NewRouter(deps Deps) http.Handler {
 	sess := &sessionHandler{subSvc: deps.SubSvc, logger: deps.Logger}
 	r.Post("/api/session", sess.handleSession)
 	r.Get("/api/me", sess.handleMe)
+	r.Get("/api/me/subscriptions", sess.handleSubscriptions)
 
 	contents := &contentHandler{contents: deps.Contents, bodies: deps.Bodies, logger: deps.Logger}
 	today := &todayHandler{picker: deps.Today, logger: deps.Logger}

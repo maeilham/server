@@ -338,3 +338,56 @@ func TestAddAllActiveRepoSubscriptions_SkipsAlreadyExisting(t *testing.T) {
 		t.Errorf("subscriptions = %+v, want exactly one unchanged row for bops", subscriptions)
 	}
 }
+
+func TestListRepoSubscriptions_MarksEnabledAndSkipsInactive(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	subs := store.NewSubscriberStore(db)
+	repos := store.NewRepoStore(db)
+
+	for _, r := range []*store.Repo{
+		{Slug: "b-repo", GitHubURL: "https://github.com/x/b", DisplayName: "B 분야", Description: "B 설명"},
+		{Slug: "a-repo", GitHubURL: "https://github.com/x/a", DisplayName: "A 분야"},
+		{Slug: "old-repo", GitHubURL: "https://github.com/x/old", DisplayName: "옛 분야"},
+	} {
+		if err := repos.Upsert(ctx, r); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := repos.Deactivate(ctx, "old-repo"); err != nil {
+		t.Fatal(err)
+	}
+
+	id, err := subs.Upsert(ctx, "a@x.co")
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := subs.Upsert(ctx, "other@x.co")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := subs.AddSubscription(ctx, id, "b-repo", 3); err != nil {
+		t.Fatal(err)
+	}
+	// 다른 사람의 구독은 내 결과에 섞이면 안 된다
+	if err := subs.AddSubscription(ctx, other, "a-repo", 3); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := subs.ListRepoSubscriptions(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []store.RepoSubscription{
+		{Slug: "a-repo", Name: "A 분야", Description: "", Enabled: false},
+		{Slug: "b-repo", Name: "B 분야", Description: "B 설명", Enabled: true},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("got %+v, want %+v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("[%d] = %+v, want %+v", i, got[i], want[i])
+		}
+	}
+}

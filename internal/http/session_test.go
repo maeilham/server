@@ -1,6 +1,7 @@
 package http
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"io"
@@ -8,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"regexp"
+	"strings"
 	"testing"
 
 	dbpkg "github.com/maeilham/server/internal/db"
@@ -216,5 +218,96 @@ func TestSessionCORS_AllowsAuthorizationHeader(t *testing.T) {
 	got := rec.Header().Get("Access-Control-Allow-Headers")
 	if !regexp.MustCompile(`(?i)Authorization`).MatchString(got) {
 		t.Errorf("Access-Control-Allow-Headers = %q, want it to include Authorization", got)
+	}
+}
+
+func decodeSubscriptions(t *testing.T, rec *httptest.ResponseRecorder) subscriptionsResponse {
+	t.Helper()
+	var out subscriptionsResponse
+	if err := json.NewDecoder(rec.Body).Decode(&out); err != nil {
+		t.Fatalf("decode body %q: %v", rec.Body.String(), err)
+	}
+	return out
+}
+
+func TestSubscriptions_ListsActiveReposWithEnabledFlag(t *testing.T) {
+	h, mailer, conn := newSessionRouter(t)
+	repos := store.NewRepoStore(conn)
+	for _, r := range []*store.Repo{
+		{Slug: "backend", GitHubURL: "https://github.com/x/backend", DisplayName: "백엔드", Description: "서버, 인프라"},
+		{Slug: "front", GitHubURL: "https://github.com/x/front", DisplayName: "프론트엔드"},
+	} {
+		if err := repos.Upsert(context.Background(), r); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tok := subscribeAndExtractToken(t, h, mailer, "me@example.com")
+	if rec := doWithBearer(h, http.MethodPost, "/api/session", tok); rec.Code != http.StatusOK {
+		t.Fatalf("establish: status = %d, body %s", rec.Code, rec.Body)
+	}
+	// 가입을 완료하면 활성 repo가 모두 켜진다. 하나를 꺼서 enabled가 섞인 상태를 만든다
+	if _, err := conn.Exec(`DELETE FROM subscriptions WHERE repo_slug = 'front'`); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := doWithBearer(h, http.MethodGet, "/api/me/subscriptions", tok)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body %s", rec.Code, rec.Body)
+	}
+	got := decodeSubscriptions(t, rec).Items
+	want := []subscriptionItem{
+		{Repo: "backend", Name: "백엔드", Description: "서버, 인프라", Enabled: true},
+		{Repo: "front", Name: "프론트엔드", Description: "", Enabled: false},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("items = %+v, want %+v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("[%d] = %+v, want %+v", i, got[i], want[i])
+		}
+	}
+}
+
+func TestSubscriptions_NoReposIsEmptyArray(t *testing.T) {
+	h, mailer, _ := newSessionRouter(t)
+	tok := subscribeAndExtractToken(t, h, mailer, "me@example.com")
+	if rec := doWithBearer(h, http.MethodPost, "/api/session", tok); rec.Code != http.StatusOK {
+		t.Fatalf("establish: status = %d, body %s", rec.Code, rec.Body)
+	}
+
+	rec := doWithBearer(h, http.MethodGet, "/api/me/subscriptions", tok)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body %s", rec.Code, rec.Body)
+	}
+	// 웹이 null이 아니라 []를 받아야 .map/.length가 안전하다
+	if body := strings.TrimSpace(rec.Body.String()); body != `{"items":[]}` {
+		t.Errorf("body = %s, want {\"items\":[]}", body)
+	}
+}
+
+func TestSubscriptions_Unauthorized(t *testing.T) {
+	h, mailer, conn := newSessionRouter(t)
+	unconfirmed := subscribeAndExtractToken(t, h, mailer, "me@example.com") // 링크를 아직 안 열었다
+	unknown := "abcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcd"
+
+	confirmed := subscribeAndExtractToken(t, h, mailer, "gone@example.com")
+	if rec := doWithBearer(h, http.MethodPost, "/api/session", confirmed); rec.Code != http.StatusOK {
+		t.Fatalf("establish: status = %d, body %s", rec.Code, rec.Body)
+	}
+	if err := store.NewSubscriberStore(conn).Unsubscribe(context.Background(), "gone@example.com"); err != nil {
+		t.Fatal(err)
+	}
+
+	for name, tok := range map[string]string{
+		"no token":     "",
+		"malformed":    "not-hex-at-all",
+		"unknown":      unknown,
+		"unconfirmed":  unconfirmed,
+		"unsubscribed": confirmed,
+	} {
+		if rec := doWithBearer(h, http.MethodGet, "/api/me/subscriptions", tok); rec.Code != http.StatusUnauthorized {
+			t.Errorf("%s: status = %d, want 401", name, rec.Code)
+		}
 	}
 }

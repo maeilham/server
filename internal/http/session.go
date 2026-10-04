@@ -80,3 +80,40 @@ func (h *sessionHandler) handleMe(w http.ResponseWriter, r *http.Request) {
 	}
 	jsonOK(w, meResponse{Status: "subscriber", Email: email})
 }
+
+type subscriptionItem struct {
+	Repo        string `json:"repo"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Enabled     bool   `json:"enabled"`
+}
+
+type subscriptionsResponse struct {
+	Items []subscriptionItem `json:"items"`
+}
+
+// handleSubscriptions는 GET /api/me/subscriptions를 처리한다. 활성 repo 전체와 내 구독 여부를 돌려준다.
+// 상태 코드: 200 / 401 / 500
+func (h *sessionHandler) handleSubscriptions(w http.ResponseWriter, r *http.Request) {
+	tok, ok := bearerToken(r)
+	if !ok {
+		jsonError(w, "인증이 필요합니다", http.StatusUnauthorized)
+		return
+	}
+	list, err := h.subSvc.RepoSubscriptions(r.Context(), tok)
+	switch {
+	case err == nil:
+	case errors.Is(err, subscriber.ErrUnauthorized):
+		jsonError(w, "유효하지 않은 링크입니다", http.StatusUnauthorized)
+		return
+	default:
+		h.logger.Error("repo subscriptions", "err", err)
+		jsonError(w, "서버 오류", http.StatusInternalServerError)
+		return
+	}
+	items := make([]subscriptionItem, 0, len(list))
+	for _, rs := range list {
+		items = append(items, subscriptionItem{Repo: rs.Slug, Name: rs.Name, Description: rs.Description, Enabled: rs.Enabled})
+	}
+	jsonOK(w, subscriptionsResponse{Items: items})
+}

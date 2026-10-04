@@ -391,3 +391,85 @@ func TestListRepoSubscriptions_MarksEnabledAndSkipsInactive(t *testing.T) {
 		}
 	}
 }
+
+func TestSetRepoSubscription(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	subs := store.NewSubscriberStore(db)
+	repos := store.NewRepoStore(db)
+	for _, slug := range []string{"a-repo", "b-repo", "old-repo"} {
+		if err := repos.Upsert(ctx, &store.Repo{Slug: slug, GitHubURL: "https://github.com/x/" + slug, DisplayName: slug}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := repos.Deactivate(ctx, "old-repo"); err != nil {
+		t.Fatal(err)
+	}
+	id, err := subs.Upsert(ctx, "a@x.co")
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := subs.Upsert(ctx, "other@x.co")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := subs.AddSubscription(ctx, other, "a-repo", 3); err != nil {
+		t.Fatal(err)
+	}
+
+	enabled := func(who int64, slug string) bool {
+		t.Helper()
+		list, err := subs.ListRepoSubscriptions(ctx, who)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, rs := range list {
+			if rs.Slug == slug {
+				return rs.Enabled
+			}
+		}
+		t.Fatalf("repo %s not listed", slug)
+		return false
+	}
+
+	// 켜기는 멱등이고, 이미 있는 구독의 가중치를 덮어쓰지 않는다
+	if err := subs.SetRepoSubscription(ctx, id, "a-repo", true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`UPDATE subscriptions SET weight = 5 WHERE subscriber_id = ? AND repo_slug = 'a-repo'`, id); err != nil {
+		t.Fatal(err)
+	}
+	if err := subs.SetRepoSubscription(ctx, id, "a-repo", true); err != nil {
+		t.Fatalf("enable twice: %v", err)
+	}
+	var weight int
+	if err := db.QueryRow(`SELECT weight FROM subscriptions WHERE subscriber_id = ? AND repo_slug = 'a-repo'`, id).Scan(&weight); err != nil || weight != 5 {
+		t.Errorf("weight = %d (err %v), want 5 preserved", weight, err)
+	}
+	if !enabled(id, "a-repo") || enabled(id, "b-repo") {
+		t.Error("only a-repo should be enabled for id")
+	}
+
+	// 끄기는 멱등이고 다른 repo와 다른 사람의 구독을 건드리지 않는다
+	if err := subs.SetRepoSubscription(ctx, id, "a-repo", false); err != nil {
+		t.Fatal(err)
+	}
+	if err := subs.SetRepoSubscription(ctx, id, "a-repo", false); err != nil {
+		t.Fatalf("disable twice: %v", err)
+	}
+	if enabled(id, "a-repo") {
+		t.Error("a-repo should be disabled for id")
+	}
+	if !enabled(other, "a-repo") {
+		t.Error("other's subscription must not change")
+	}
+
+	// 없거나 비활성인 repo는 ErrRepoNotFound
+	for _, slug := range []string{"nope", "old-repo"} {
+		for _, on := range []bool{true, false} {
+			if err := subs.SetRepoSubscription(ctx, id, slug, on); !errors.Is(err, store.ErrRepoNotFound) {
+				t.Errorf("%s enabled=%v: err = %v, want ErrRepoNotFound", slug, on, err)
+			}
+		}
+	}
+}

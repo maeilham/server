@@ -16,6 +16,9 @@ import (
 // 구분하지 못하게 한다(401 응답에 "해지한 사람인지"가 새지 않게 하려는 의도).
 var ErrSubscriberNotFound = errors.New("subscriber not found")
 
+// ErrRepoNotFound는 구독을 바꾸려는 repo가 없거나 비활성일 때 쓴다.
+var ErrRepoNotFound = errors.New("repo not found")
+
 type Subscriber struct {
 	ID    int64
 	Email string
@@ -68,6 +71,9 @@ type SubscriberRepository interface {
 	LoadSubscriptions(ctx context.Context, id int64) ([]Subscription, error)
 	// ListRepoSubscriptions는 활성 repo 전체를 slug 순으로 돌려주고, id가 구독 중인 repo는 Enabled=true로 표시한다.
 	ListRepoSubscriptions(ctx context.Context, id int64) ([]RepoSubscription, error)
+	// SetRepoSubscription은 id의 slug 구독을 켜거나(없을 때만 기본 가중치로 추가) 끈다. 이미 원하는 상태여도
+	// 성공이다(멱등). slug가 없거나 비활성 repo면 ErrRepoNotFound.
+	SetRepoSubscription(ctx context.Context, id int64, slug string, enabled bool) error
 }
 
 // subQueries holds all single-query method implementations, shared by both store types.
@@ -354,4 +360,26 @@ func (s *subQueries) ListRepoSubscriptions(ctx context.Context, id int64) ([]Rep
 		out = append(out, rs)
 	}
 	return out, rows.Err()
+}
+
+func (s *subQueries) SetRepoSubscription(ctx context.Context, id int64, slug string, enabled bool) error {
+	var one int
+	err := s.db.QueryRowContext(ctx, `SELECT 1 FROM repos WHERE slug = ? AND active = 1`, slug).Scan(&one)
+	if err == sql.ErrNoRows {
+		return ErrRepoNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("find repo %s: %w", slug, err)
+	}
+	if enabled {
+		_, err = s.db.ExecContext(ctx,
+			`INSERT OR IGNORE INTO subscriptions (subscriber_id, repo_slug, weight) VALUES (?, ?, 3)`, id, slug)
+	} else {
+		_, err = s.db.ExecContext(ctx,
+			`DELETE FROM subscriptions WHERE subscriber_id = ? AND repo_slug = ?`, id, slug)
+	}
+	if err != nil {
+		return fmt.Errorf("set subscription %s: %w", slug, err)
+	}
+	return nil
 }

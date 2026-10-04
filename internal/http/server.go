@@ -50,6 +50,7 @@ func NewRouter(deps Deps) http.Handler {
 	r.Post("/api/session", sess.handleSession)
 	r.Get("/api/me", sess.handleMe)
 	r.Get("/api/me/subscriptions", sess.handleSubscriptions)
+	r.Put("/api/me/subscriptions/{repo}", sess.handleSetSubscription)
 
 	contents := &contentHandler{contents: deps.Contents, bodies: deps.Bodies, logger: deps.Logger}
 	today := &todayHandler{picker: deps.Today, logger: deps.Logger}
@@ -87,7 +88,7 @@ func slogMiddleware(logger *slog.Logger) func(http.Handler) http.Handler {
 func corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)

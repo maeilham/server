@@ -82,3 +82,12 @@ func (s *SubscriberService) RepoSubscriptions(ctx context.Context, tok string) (
 	}
 	return s.repo.ListRepoSubscriptions(ctx, sess.ID)
 }
+
+// SetRepoSubscription은 tok 주인의 repo 하나 구독을 켜거나 끈다. repo가 없거나 비활성이면 store.ErrRepoNotFound.
+func (s *SubscriberService) SetRepoSubscription(ctx context.Context, tok, slug string, enabled bool) error {
+	sess, err := s.authenticate(ctx, tok)
+	if err != nil {
+		return err
+	}
+	return s.repo.SetRepoSubscription(ctx, sess.ID, slug, enabled)
+}

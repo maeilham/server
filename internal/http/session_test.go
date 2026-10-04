@@ -311,3 +311,91 @@ func TestSubscriptions_Unauthorized(t *testing.T) {
 		}
 	}
 }
+
+func putSubscription(h http.Handler, repo, tok, body string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(http.MethodPut, "/api/me/subscriptions/"+repo, strings.NewReader(body))
+	if tok != "" {
+		req.Header.Set("Authorization", "Bearer "+tok)
+	}
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	return rec
+}
+
+// newConfirmedSubscriber는 repo 두 개를 만들고 가입을 끝낸(둘 다 켜진) 구독자의 토큰을 돌려준다.
+func newConfirmedSubscriber(t *testing.T) (http.Handler, string) {
+	t.Helper()
+	h, mailer, conn := newSessionRouter(t)
+	repos := store.NewRepoStore(conn)
+	for _, slug := range []string{"backend", "front"} {
+		if err := repos.Upsert(context.Background(), &store.Repo{Slug: slug, GitHubURL: "https://github.com/x/" + slug, DisplayName: slug}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tok := subscribeAndExtractToken(t, h, mailer, "me@example.com")
+	if rec := doWithBearer(h, http.MethodPost, "/api/session", tok); rec.Code != http.StatusOK {
+		t.Fatalf("establish: status = %d, body %s", rec.Code, rec.Body)
+	}
+	return h, tok
+}
+
+func TestSetSubscription_TogglesAndShowsInList(t *testing.T) {
+	h, tok := newConfirmedSubscriber(t)
+
+	rec := putSubscription(h, "front", tok, `{"enabled":false}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("off: status = %d, body %s", rec.Code, rec.Body)
+	}
+	var out setSubscriptionResponse
+	if err := json.NewDecoder(rec.Body).Decode(&out); err != nil || out.Repo != "front" || out.Enabled {
+		t.Errorf("response = %+v (err %v), want repo=front enabled=false", out, err)
+	}
+	items := decodeSubscriptions(t, doWithBearer(h, http.MethodGet, "/api/me/subscriptions", tok)).Items
+	if len(items) != 2 || !items[0].Enabled || items[1].Enabled {
+		t.Errorf("after off: items = %+v, want backend on / front off", items)
+	}
+
+	if rec := putSubscription(h, "front", tok, `{"enabled":true}`); rec.Code != http.StatusOK {
+		t.Fatalf("on: status = %d, body %s", rec.Code, rec.Body)
+	}
+	items = decodeSubscriptions(t, doWithBearer(h, http.MethodGet, "/api/me/subscriptions", tok)).Items
+	if len(items) != 2 || !items[0].Enabled || !items[1].Enabled {
+		t.Errorf("after on: items = %+v, want both on", items)
+	}
+}
+
+func TestSetSubscription_Errors(t *testing.T) {
+	h, tok := newConfirmedSubscriber(t)
+
+	cases := []struct {
+		name, repo, tok, body string
+		want                  int
+	}{
+		{"no token", "front", "", `{"enabled":false}`, http.StatusUnauthorized},
+		{"unknown token", "front", "abcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcd", `{"enabled":false}`, http.StatusUnauthorized},
+		{"unknown repo", "nope", tok, `{"enabled":false}`, http.StatusNotFound},
+		{"not json", "front", tok, `enabled`, http.StatusBadRequest},
+		{"missing enabled", "front", tok, `{}`, http.StatusBadRequest},
+		{"wrong type", "front", tok, `{"enabled":"yes"}`, http.StatusBadRequest},
+	}
+	for _, c := range cases {
+		if rec := putSubscription(h, c.repo, c.tok, c.body); rec.Code != c.want {
+			t.Errorf("%s: status = %d, want %d (body %s)", c.name, rec.Code, c.want, rec.Body)
+		}
+	}
+	// 실패한 요청이 구독을 바꾸지 않았다
+	items := decodeSubscriptions(t, doWithBearer(h, http.MethodGet, "/api/me/subscriptions", tok)).Items
+	if len(items) != 2 || !items[0].Enabled || !items[1].Enabled {
+		t.Errorf("items = %+v, want both still on", items)
+	}
+}
+
+func TestCORS_AllowsPut(t *testing.T) {
+	h, _ := newSubscribeRouter(t)
+	req := httptest.NewRequest(http.MethodOptions, "/api/me/subscriptions/front", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if got := rec.Header().Get("Access-Control-Allow-Methods"); !strings.Contains(got, "PUT") {
+		t.Errorf("Access-Control-Allow-Methods = %q, want it to include PUT", got)
+	}
+}

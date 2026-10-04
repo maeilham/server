@@ -1,11 +1,15 @@
 package http
 
 import (
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
 	"strings"
 
+	"github.com/go-chi/chi/v5"
+
+	"github.com/maeilham/server/internal/store"
 	"github.com/maeilham/server/internal/subscriber"
 )
 
@@ -116,4 +120,42 @@ func (h *sessionHandler) handleSubscriptions(w http.ResponseWriter, r *http.Requ
 		items = append(items, subscriptionItem{Repo: rs.Slug, Name: rs.Name, Description: rs.Description, Enabled: rs.Enabled})
 	}
 	jsonOK(w, subscriptionsResponse{Items: items})
+}
+
+type setSubscriptionResponse struct {
+	Repo    string `json:"repo"`
+	Enabled bool   `json:"enabled"`
+}
+
+// handleSetSubscription은 PUT /api/me/subscriptions/{repo}를 처리한다. 본문은 {"enabled": true|false}이고
+// 멱등하다. 상태 코드: 200 / 400(본문 오류) / 401 / 404(없거나 비활성인 repo) / 500
+func (h *sessionHandler) handleSetSubscription(w http.ResponseWriter, r *http.Request) {
+	tok, ok := bearerToken(r)
+	if !ok {
+		jsonError(w, "인증이 필요합니다", http.StatusUnauthorized)
+		return
+	}
+	var req struct {
+		Enabled *bool `json:"enabled"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Enabled == nil {
+		jsonError(w, "enabled(true/false)가 필요합니다", http.StatusBadRequest)
+		return
+	}
+	slug := chi.URLParam(r, "repo")
+	err := h.subSvc.SetRepoSubscription(r.Context(), tok, slug, *req.Enabled)
+	switch {
+	case err == nil:
+	case errors.Is(err, subscriber.ErrUnauthorized):
+		jsonError(w, "유효하지 않은 링크입니다", http.StatusUnauthorized)
+		return
+	case errors.Is(err, store.ErrRepoNotFound):
+		jsonError(w, "없는 분야입니다", http.StatusNotFound)
+		return
+	default:
+		h.logger.Error("set subscription", "repo", slug, "err", err)
+		jsonError(w, "서버 오류", http.StatusInternalServerError)
+		return
+	}
+	jsonOK(w, setSubscriptionResponse{Repo: slug, Enabled: *req.Enabled})
 }

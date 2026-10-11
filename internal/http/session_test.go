@@ -451,3 +451,60 @@ func TestUnsubscribeMe_Unauthorized(t *testing.T) {
 		t.Errorf("unsubscribed_at set = %v (err %v), want false: a rejected request must not unsubscribe", unsubscribed, err)
 	}
 }
+
+func TestRotateLink_EmailsNewLinkAndNeverReturnsIt(t *testing.T) {
+	h, mailer, _ := newSessionRouter(t)
+	oldTok := subscribeAndExtractToken(t, h, mailer, "me@example.com")
+	if rec := doWithBearer(h, http.MethodPost, "/api/session", oldTok); rec.Code != http.StatusOK {
+		t.Fatalf("establish: status = %d, body %s", rec.Code, rec.Body)
+	}
+
+	rec := doWithBearer(h, http.MethodPost, "/api/me/rotate-link", oldTok)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body %s", rec.Code, rec.Body)
+	}
+
+	last := mailer.sent[len(mailer.sent)-1]
+	m := sessionLinkRe.FindStringSubmatch(last.TextBody)
+	if m == nil || m[1] == oldTok {
+		t.Fatalf("new link mail has no new token (got %v)", m)
+	}
+	newTok := m[1]
+	if last.To != "me@example.com" {
+		t.Errorf("new link sent to %q, want me@example.com", last.To)
+	}
+	// 유출된 링크를 가진 사람이 눌러도 새 토큰을 얻지 못해야 한다
+	if strings.Contains(rec.Body.String(), newTok) {
+		t.Errorf("response leaks the new token: %s", rec.Body)
+	}
+	if rec := doWithBearer(h, http.MethodGet, "/api/me", oldTok); rec.Code != http.StatusUnauthorized {
+		t.Errorf("old token: status = %d, want 401", rec.Code)
+	}
+	if rec := doWithBearer(h, http.MethodGet, "/api/me", newTok); rec.Code != http.StatusOK {
+		t.Errorf("new token: status = %d, want 200", rec.Code)
+	}
+}
+
+func TestRotateLink_Unauthorized(t *testing.T) {
+	h, mailer, _ := newSessionRouter(t)
+	unconfirmed := subscribeAndExtractToken(t, h, mailer, "me@example.com") // 링크를 아직 안 열었다
+	sentBefore := len(mailer.sent)
+
+	for name, tok := range map[string]string{
+		"no token":    "",
+		"malformed":   "not-hex-at-all",
+		"unknown":     "abcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcd",
+		"unconfirmed": unconfirmed,
+	} {
+		if rec := doWithBearer(h, http.MethodPost, "/api/me/rotate-link", tok); rec.Code != http.StatusUnauthorized {
+			t.Errorf("%s: status = %d, want 401", name, rec.Code)
+		}
+	}
+	if len(mailer.sent) != sentBefore {
+		t.Errorf("a rejected request sent %d extra mails", len(mailer.sent)-sentBefore)
+	}
+	// 거절된 요청이 링크를 바꾸지 않았다
+	if rec := doWithBearer(h, http.MethodPost, "/api/session", unconfirmed); rec.Code != http.StatusOK {
+		t.Errorf("original link stopped working: status = %d", rec.Code)
+	}
+}

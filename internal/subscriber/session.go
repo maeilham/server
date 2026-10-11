@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 
+	imail "github.com/maeilham/server/internal/mail"
 	"github.com/maeilham/server/internal/pkg/token"
 	"github.com/maeilham/server/internal/store"
 )
@@ -101,4 +102,25 @@ func (s *SubscriberService) UnsubscribeSession(ctx context.Context, tok string) 
 		return err
 	}
 	return s.repo.Unsubscribe(ctx, sess.Email)
+}
+
+// RotateLink는 tok(개인 링크 토큰) 주인의 링크를 새로 만든다. 링크가 유출됐을 때 옛 링크를 무효로 만드는 용도다.
+func (s *SubscriberService) RotateLink(ctx context.Context, tok string) error {
+	sess, err := s.authenticate(ctx, tok)
+	if err != nil {
+		return err
+	}
+	newTok, err := token.NewAccessToken()
+	if err != nil {
+		return err
+	}
+	subject, text, html := imail.RenderRotatedLink(s.PersonalLinkURL(newTok))
+	if err := s.mailer.Send(ctx, imail.Message{To: sess.Email, Subject: subject, TextBody: text, HTMLBody: html}); err != nil {
+		return err
+	}
+	err = s.repo.ReplaceAccessToken(ctx, tok, newTok)
+	if errors.Is(err, store.ErrSubscriberNotFound) {
+		return ErrUnauthorized
+	}
+	return err
 }

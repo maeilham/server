@@ -63,6 +63,7 @@ type SubscriberRepository interface {
 	ClearSubscriptions(ctx context.Context, id int64) error
 	AddSubscription(ctx context.Context, id int64, slug string, weight int) error
 	AddAllActiveRepoSubscriptions(ctx context.Context, id int64) error
+	// Reactivate는 해지한 구독자를 가입 대기로 돌리고 개인 링크 토큰을 비운다(옛 링크는 되살아나지 않는다).
 	Reactivate(ctx context.Context, email string) error
 	Unsubscribe(ctx context.Context, email string) error
 	IsUnsubscribed(ctx context.Context, email string) (bool, error)
@@ -74,6 +75,9 @@ type SubscriberRepository interface {
 	// SetRepoSubscription은 id의 slug 구독을 켜거나(없을 때만 기본 가중치로 추가) 끈다. 이미 원하는 상태여도
 	// 성공이다(멱등). slug가 없거나 비활성 repo면 ErrRepoNotFound.
 	SetRepoSubscription(ctx context.Context, id int64, slug string, enabled bool) error
+	// ReplaceAccessToken은 개인 링크 토큰 oldTok을 newTok으로 바꾼다. oldTok이 그대로일 때만 바꾸므로(조건부 UPDATE)
+	// 같은 토큰으로 동시에 불러도 하나만 이긴다. 확인을 마치고 해지하지 않은 구독자가 아니면 ErrSubscriberNotFound.
+	ReplaceAccessToken(ctx context.Context, oldTok, newTok string) error
 }
 
 // subQueries holds all single-query method implementations, shared by both store types.
@@ -252,9 +256,12 @@ func (s *subQueries) AddAllActiveRepoSubscriptions(ctx context.Context, id int64
 	return nil
 }
 
+// Reactivate는 해지한 구독자를 다시 가입 대기 상태로 돌린다. 개인 링크 토큰도 비워서(NULL) 옛 링크가
+// 되살아나지 않게 한다 — 해지 전에 유출된 링크로 다시 들어올 수 없고, 호출한 쪽이 EnsureAccessToken으로
+// 새 토큰을 만들어 보낸다. 해지하지 않은 구독자는 건드리지 않는다.
 func (s *subQueries) Reactivate(ctx context.Context, email string) error {
 	_, err := s.db.ExecContext(ctx,
-		`UPDATE subscribers SET unsubscribed_at = NULL, confirmed_at = NULL
+		`UPDATE subscribers SET unsubscribed_at = NULL, confirmed_at = NULL, access_token = NULL
 		  WHERE email = ? AND unsubscribed_at IS NOT NULL`, email,
 	)
 	return err
@@ -380,6 +387,25 @@ func (s *subQueries) SetRepoSubscription(ctx context.Context, id int64, slug str
 	}
 	if err != nil {
 		return fmt.Errorf("set subscription %s: %w", slug, err)
+	}
+	return nil
+}
+
+func (s *subQueries) ReplaceAccessToken(ctx context.Context, oldTok, newTok string) error {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE subscribers SET access_token = ?
+		  WHERE access_token = ? AND confirmed_at IS NOT NULL AND unsubscribed_at IS NULL`,
+		newTok, oldTok,
+	)
+	if err != nil {
+		return fmt.Errorf("replace access token: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("replace access token: %w", err)
+	}
+	if n == 0 {
+		return ErrSubscriberNotFound
 	}
 	return nil
 }

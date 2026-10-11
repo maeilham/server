@@ -31,6 +31,7 @@ func (s *SubscriberService) PersonalLinkURL(accessToken string) string {
 //
 // 이 메일 하나가 가입 확인과 개인 링크를 겸한다(링크를 처음 여는 것이 이메일 인증).
 // 이미 가입한 주소로 다시 불러도 같은 토큰이라 같은 링크를 다시 보낸다(링크를 잃어버린 경우).
+// 단 해지했던 사람이 다시 가입하면 새 링크를 만든다(해지 전에 유출된 옛 링크가 되살아나지 않게).
 //
 // repoWeights가 있으면(터미널의 repo 선택 흐름) 가중치를 확인 링크에 실어야 하므로 옛 확인 메일을 쓴다.
 func (s *SubscriberService) Subscribe(ctx context.Context, email string, repoWeights map[string]int) error {

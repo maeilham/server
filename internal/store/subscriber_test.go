@@ -473,3 +473,86 @@ func TestSetRepoSubscription(t *testing.T) {
 		}
 	}
 }
+
+func TestReplaceAccessToken(t *testing.T) {
+	ctx := context.Background()
+	subs := store.NewSubscriberStore(newTestDB(t))
+
+	confirmed := func(email string) (int64, string) {
+		t.Helper()
+		id, err := subs.Upsert(ctx, email)
+		if err != nil {
+			t.Fatal(err)
+		}
+		tok, err := subs.EnsureAccessToken(ctx, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := subs.ConfirmByAccessToken(ctx, tok); err != nil {
+			t.Fatal(err)
+		}
+		return id, tok
+	}
+	id, oldTok := confirmed("a@x.co")
+	_, otherTok := confirmed("other@x.co")
+	newTok, _ := token.NewAccessToken()
+
+	if err := subs.ReplaceAccessToken(ctx, oldTok, newTok); err != nil {
+		t.Fatal(err)
+	}
+	if sess, err := subs.SubscriberByAccessToken(ctx, newTok); err != nil || sess.ID != id {
+		t.Errorf("new token: sess=%+v err=%v, want id %d", sess, err, id)
+	}
+	if _, err := subs.SubscriberByAccessToken(ctx, oldTok); !errors.Is(err, store.ErrSubscriberNotFound) {
+		t.Errorf("old token after replace: err = %v, want ErrSubscriberNotFound", err)
+	}
+	// 다른 구독자의 토큰은 그대로다
+	if _, err := subs.SubscriberByAccessToken(ctx, otherTok); err != nil {
+		t.Errorf("other subscriber's token broke: %v", err)
+	}
+	// 이미 교체된 옛 토큰으로 다시 교체할 수 없다(조건부 UPDATE)
+	again, _ := token.NewAccessToken()
+	if err := subs.ReplaceAccessToken(ctx, oldTok, again); !errors.Is(err, store.ErrSubscriberNotFound) {
+		t.Errorf("second replace with stale token: err = %v, want ErrSubscriberNotFound", err)
+	}
+	if _, err := subs.SubscriberByAccessToken(ctx, newTok); err != nil {
+		t.Errorf("stale replace must not change the current token: %v", err)
+	}
+}
+
+func TestReplaceAccessToken_RefusesUnconfirmedAndUnsubscribed(t *testing.T) {
+	ctx := context.Background()
+	subs := store.NewSubscriberStore(newTestDB(t))
+
+	// 링크를 아직 안 연(미확인) 구독자
+	idA, err := subs.Upsert(ctx, "a@x.co")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tokA, err := subs.EnsureAccessToken(ctx, idA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 확인 후 해지한 구독자
+	idB, err := subs.Upsert(ctx, "b@x.co")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tokB, err := subs.EnsureAccessToken(ctx, idB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := subs.ConfirmByAccessToken(ctx, tokB); err != nil {
+		t.Fatal(err)
+	}
+	if err := subs.Unsubscribe(ctx, "b@x.co"); err != nil {
+		t.Fatal(err)
+	}
+
+	for name, old := range map[string]string{"unconfirmed": tokA, "unsubscribed": tokB} {
+		fresh, _ := token.NewAccessToken()
+		if err := subs.ReplaceAccessToken(ctx, old, fresh); !errors.Is(err, store.ErrSubscriberNotFound) {
+			t.Errorf("%s: err = %v, want ErrSubscriberNotFound", name, err)
+		}
+	}
+}

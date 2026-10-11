@@ -259,3 +259,111 @@ func TestSessionStatus_Unsubscribed(t *testing.T) {
 		t.Errorf("err = %v, want ErrUnauthorized", err)
 	}
 }
+
+func TestRotateLink_SendsNewLinkAndInvalidatesOld(t *testing.T) {
+	svc, mailer, _, row := newTestService(t)
+	ctx := context.Background()
+
+	if err := svc.Subscribe(ctx, "me@example.com", nil); err != nil {
+		t.Fatal(err)
+	}
+	oldTok := linkRe.FindStringSubmatch(mailer.sent[0].TextBody)[1]
+	if _, err := svc.EstablishSession(ctx, oldTok); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := svc.RotateLink(ctx, oldTok); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(mailer.sent) != 2 {
+		t.Fatalf("sent %d mails, want 2 (signup + new link)", len(mailer.sent))
+	}
+	msg := mailer.sent[1]
+	if msg.To != "me@example.com" {
+		t.Errorf("new link sent to %q, want me@example.com", msg.To)
+	}
+	m := linkRe.FindStringSubmatch(msg.TextBody)
+	if m == nil || m[1] == oldTok {
+		t.Fatalf("new link mail has no new token (got %v)", m)
+	}
+	newTok := m[1]
+	if stored, _ := row("me@example.com"); stored != newTok {
+		t.Errorf("stored token = %q, want the one in the mail", stored)
+	}
+	if _, err := svc.SessionStatus(ctx, oldTok); !errors.Is(err, ErrUnauthorized) {
+		t.Errorf("old token: err = %v, want ErrUnauthorized", err)
+	}
+	if email, err := svc.SessionStatus(ctx, newTok); err != nil || email != "me@example.com" {
+		t.Errorf("new token: email=%q err=%v, want me@example.com", email, err)
+	}
+}
+
+func TestRotateLink_MailFailureKeepsOldLink(t *testing.T) {
+	svc, mailer, _, row := newTestService(t)
+	ctx := context.Background()
+
+	if err := svc.Subscribe(ctx, "me@example.com", nil); err != nil {
+		t.Fatal(err)
+	}
+	oldTok := linkRe.FindStringSubmatch(mailer.sent[0].TextBody)[1]
+	if _, err := svc.EstablishSession(ctx, oldTok); err != nil {
+		t.Fatal(err)
+	}
+
+	mailer.err = errors.New("smtp down")
+	if err := svc.RotateLink(ctx, oldTok); err == nil {
+		t.Fatal("err = nil, want the mail error")
+	}
+
+	if stored, _ := row("me@example.com"); stored != oldTok {
+		t.Errorf("stored token changed to %q although the mail failed", stored)
+	}
+	if _, err := svc.SessionStatus(ctx, oldTok); err != nil {
+		t.Errorf("old token must still work after a failed rotate: %v", err)
+	}
+}
+
+func TestRotateLink_Unauthorized(t *testing.T) {
+	svc, mailer, _, _ := newTestService(t)
+	ctx := context.Background()
+
+	if err := svc.Subscribe(ctx, "me@example.com", nil); err != nil {
+		t.Fatal(err)
+	}
+	unconfirmed := linkRe.FindStringSubmatch(mailer.sent[0].TextBody)[1] // 링크를 아직 안 열었다
+	unknown := "abcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcd"
+
+	for name, tok := range map[string]string{"unconfirmed": unconfirmed, "unknown": unknown, "malformed": "nope"} {
+		if err := svc.RotateLink(ctx, tok); !errors.Is(err, ErrUnauthorized) {
+			t.Errorf("%s: err = %v, want ErrUnauthorized", name, err)
+		}
+	}
+	if len(mailer.sent) != 1 {
+		t.Errorf("sent %d mails, want only the signup mail", len(mailer.sent))
+	}
+}
+
+func TestRotateLink_OldTokenCannotRotateAgain(t *testing.T) {
+	svc, mailer, _, _ := newTestService(t)
+	ctx := context.Background()
+
+	if err := svc.Subscribe(ctx, "me@example.com", nil); err != nil {
+		t.Fatal(err)
+	}
+	oldTok := linkRe.FindStringSubmatch(mailer.sent[0].TextBody)[1]
+	if _, err := svc.EstablishSession(ctx, oldTok); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.RotateLink(ctx, oldTok); err != nil {
+		t.Fatal(err)
+	}
+
+	// 유출된 옛 링크를 가진 사람은 한 번 쫓겨난 뒤에는 다시 재발급도 못 한다
+	if err := svc.RotateLink(ctx, oldTok); !errors.Is(err, ErrUnauthorized) {
+		t.Errorf("err = %v, want ErrUnauthorized", err)
+	}
+	if len(mailer.sent) != 2 {
+		t.Errorf("sent %d mails, want 2 (signup + one new link)", len(mailer.sent))
+	}
+}

@@ -181,3 +181,26 @@ func (h *sessionHandler) handleUnsubscribeMe(w http.ResponseWriter, r *http.Requ
 	}
 	jsonOK(w, map[string]string{"message": "구독이 해지되었습니다"})
 }
+
+// handleRotateLink는 POST /api/me/rotate-link를 처리한다. 개인 링크를 새로 만들어 이메일로 보내고 옛 링크를
+// 무효로 만든다. 새 링크(토큰)는 응답에 담지 않는다. 메일 발송이 실패하면 옛 링크가 그대로 유효하다.
+// 상태 코드: 200 / 401 / 500
+func (h *sessionHandler) handleRotateLink(w http.ResponseWriter, r *http.Request) {
+	tok, ok := bearerToken(r)
+	if !ok {
+		jsonError(w, "인증이 필요합니다", http.StatusUnauthorized)
+		return
+	}
+	err := h.subSvc.RotateLink(r.Context(), tok)
+	switch {
+	case err == nil:
+	case errors.Is(err, subscriber.ErrUnauthorized):
+		jsonError(w, "유효하지 않은 링크입니다", http.StatusUnauthorized)
+		return
+	default:
+		h.logger.Error("rotate link", "err", err)
+		jsonError(w, "서버 오류", http.StatusInternalServerError)
+		return
+	}
+	jsonOK(w, map[string]string{"message": "새 링크를 메일로 보냈습니다"})
+}

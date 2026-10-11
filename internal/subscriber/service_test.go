@@ -114,8 +114,8 @@ func TestSubscribe_ResendsSameLink(t *testing.T) {
 	}
 }
 
-// 해지했다가 다시 가입해도 링크(토큰)는 그대로이고, 다시 링크를 열어야 가입이 완료된다.
-func TestSubscribe_AfterUnsubscribeKeepsToken(t *testing.T) {
+// 해지했다가 다시 가입하면 새 링크가 나가고, 해지 전의(유출됐을 수 있는) 옛 링크는 되살아나지 않는다.
+func TestSubscribe_AfterUnsubscribeIssuesNewLink(t *testing.T) {
 	svc, mailer, repo, row := newTestService(t)
 	ctx := context.Background()
 
@@ -123,7 +123,7 @@ func TestSubscribe_AfterUnsubscribeKeepsToken(t *testing.T) {
 		t.Fatal(err)
 	}
 	first, _ := row("me@example.com")
-	if _, err := repo.SetConfirmed(ctx, "me@example.com"); err != nil {
+	if _, err := svc.EstablishSession(ctx, first); err != nil {
 		t.Fatal(err)
 	}
 	if err := repo.Unsubscribe(ctx, "me@example.com"); err != nil {
@@ -134,11 +134,42 @@ func TestSubscribe_AfterUnsubscribeKeepsToken(t *testing.T) {
 		t.Fatal(err)
 	}
 	tok, confirmed := row("me@example.com")
-	if tok != first {
-		t.Errorf("token changed after resubscribe: %q -> %q", first, tok)
+	if tok == "" || tok == first {
+		t.Errorf("token after resubscribe = %q, want a new one (old %q)", tok, first)
 	}
 	if confirmed {
 		t.Error("resubscribed subscriber should have to open the link again")
+	}
+	if got := linkRe.FindStringSubmatch(mailer.sent[len(mailer.sent)-1].TextBody); got == nil || got[1] != tok {
+		t.Errorf("mail does not carry the new link: %v (stored %q)", got, tok)
+	}
+	// 옛 링크는 다시 열어도 가입이 완료되지 않고, 새 링크로만 들어갈 수 있다
+	if _, err := svc.EstablishSession(ctx, first); !errors.Is(err, ErrUnauthorized) {
+		t.Errorf("old link after resubscribe: err = %v, want ErrUnauthorized", err)
+	}
+	if newly, err := svc.EstablishSession(ctx, tok); err != nil || !newly {
+		t.Errorf("new link: newly=%v err=%v, want newly confirmed", newly, err)
+	}
+}
+
+// 해지하지 않은 구독자가 다시 신청하는 건(링크 분실) 같은 링크를 다시 받는 것이다.
+func TestSubscribe_AgainWithoutUnsubscribeKeepsToken(t *testing.T) {
+	svc, mailer, _, row := newTestService(t)
+	ctx := context.Background()
+
+	if err := svc.Subscribe(ctx, "me@example.com", nil); err != nil {
+		t.Fatal(err)
+	}
+	first, _ := row("me@example.com")
+	if _, err := svc.EstablishSession(ctx, first); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := svc.Subscribe(ctx, "me@example.com", nil); err != nil {
+		t.Fatal(err)
+	}
+	if tok, confirmed := row("me@example.com"); tok != first || !confirmed {
+		t.Errorf("token=%q confirmed=%v, want unchanged token and still confirmed", tok, confirmed)
 	}
 	if got := linkRe.FindStringSubmatch(mailer.sent[len(mailer.sent)-1].TextBody); got == nil || got[1] != first {
 		t.Errorf("mail does not carry the original link: %v", got)

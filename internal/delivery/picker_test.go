@@ -386,7 +386,7 @@ func TestForGuest_IsTheVirtualSubscriberZero(t *testing.T) {
 	slugs := []string{"be", "fe"} // ListActive는 slug 순
 	for i := 0; i < 60; i++ {
 		now := time.Date(2026, 6, 1, 12, 0, 0, 0, kst).AddDate(0, 0, i)
-		want := slugs[pickByWeight([]int{1, 1}, dailyPickSeed(0, now))]
+		want := slugs[pickByWeight([]int{1, 1}, dailyPickSeed(0, now, kst))]
 		got, err := pickerAt(db, now).ForGuest(context.Background())
 		if err != nil || got == nil || got.RepoSlug != want {
 			t.Fatalf("day %d: got %s err=%v, want repo %s (id 0 seed, equal weights)", i, idOf(got), err, want)
@@ -638,4 +638,26 @@ func stringFromInt(i int) string {
 		i /= 10
 	}
 	return string(buf[pos:])
+}
+
+// 시드는 서비스 시간대의 달력 날짜에만 달려 있다. 같은 순간을 어느 시간대 표기로 넘겨도 같아야 하고,
+// UTC로는 날짜가 다른 두 시각도 한국 하루가 같으면 같아야 하며, 한국 날짜가 바뀌면 달라야 한다.
+func TestDailyPickSeed_DependsOnServiceDateOnly(t *testing.T) {
+	const id = 7
+	instant := time.Date(2026, 5, 27, 0, 30, 0, 0, kst) // 한국 5/27 00:30 = UTC 5/26 15:30
+
+	if a, b := dailyPickSeed(id, instant, kst), dailyPickSeed(id, instant.UTC(), kst); a != b {
+		t.Errorf("같은 순간인데 표기(KST/UTC)에 따라 시드가 다름: %d vs %d", a, b)
+	}
+	lateSameDay := time.Date(2026, 5, 27, 23, 30, 0, 0, kst) // 한국 5/27 23:30 = UTC 5/27 14:30 (UTC 날짜가 다름)
+	if a, b := dailyPickSeed(id, instant, kst), dailyPickSeed(id, lateSameDay, kst); a != b {
+		t.Errorf("한국 같은 날(UTC 날짜는 다름)인데 시드가 다름: %d vs %d", a, b)
+	}
+	prevDay := time.Date(2026, 5, 26, 23, 30, 0, 0, kst) // 한국 5/26 = 전날
+	if a, b := dailyPickSeed(id, instant, kst), dailyPickSeed(id, prevDay, kst); a == b {
+		t.Errorf("한국 날짜가 다른데 시드가 같음: %d", a)
+	}
+	if a, b := dailyPickSeed(1, instant, kst), dailyPickSeed(2, instant, kst); a == b {
+		t.Errorf("구독자가 다른데 시드가 같음: %d", a)
+	}
 }

@@ -1,9 +1,3 @@
-// Package delivery는 오늘의 질문을 정하고(Picker) 매일 메일을 발송하는(DailySend) 로직을 담음.
-//
-// 핵심 원칙: 같은 repo를 구독한 사용자는 같은 날 같은 콘텐츠를 받음(뉴스 모델).
-//   - 각 repo의 "오늘의 콘텐츠"는 Picker.contentOfDay 하나로 결정됨
-//   - 사용자는 구독한 repo 중 가중치 확률로 1개 repo를 뽑고, 그 repo의 오늘 콘텐츠를 받음
-//   - 가중 추첨은 (구독자, 서비스의 날짜) 시드로 결정론적이라 재시도 시 동일 결과를 보장함
 package delivery
 
 import (
@@ -31,7 +25,7 @@ type Picker struct {
 	Subs     store.SubscriberRepository
 	Contents store.ContentRepository
 	Log      store.DeliveryLogRepository
-	Loc      *time.Location   // 서비스의 하루를 나누는 시간대 (운영 기본값 Asia/Seoul)
+	Loc      *time.Location   // 서비스의 하루를 나누는 시간대
 	Now      func() time.Time // 기준 시각. 테스트와 메일 배치(발송 기준 시각)가 고정하는 주입점. nil이면 time.Now 사용
 }
 
@@ -111,8 +105,7 @@ func (p *Picker) pick(ctx context.Context, seedID int64, repos []repoWeight) (*s
 	for i, c := range candidates {
 		weights[i] = c.weight
 	}
-	day := p.now().In(p.Loc)
-	return candidates[pickByWeight(weights, dailyPickSeed(seedID, day))].content, nil
+	return candidates[pickByWeight(weights, dailyPickSeed(seedID, p.now(), p.Loc))].content, nil
 }
 
 // contentOfDay는 그 repo의 오늘 글을 돌려줌. repo에 글이 하나도 없으면 (nil, nil).
@@ -142,7 +135,7 @@ func (p *Picker) contentOfDay(ctx context.Context, repoSlug string) (*store.Cont
 	return p.Contents.GetByRepoAndID(ctx, repoSlug, next.ContentID)
 }
 
-// pickByWeight는 seed에 따라 가중치에 비례해 인덱스 하나를 고름.
+// pickByWeight는 seed에 따라 가중치에 비례해 인덱스 하나를 선택해요.
 // (구독자, 날짜) 시드를 사용하면 같은 입력에 항상 같은 결과가 나옴.
 // weights는 비어 있지 않고 합이 0보다 커야 함(구독 가중치는 DB에서 1~5로 제한됨).
 func pickByWeight(weights []int, seed uint64) int {
@@ -161,12 +154,10 @@ func pickByWeight(weights []int, seed uint64) int {
 	return len(weights) - 1
 }
 
-// dailyPickSeed는 (subscriberID, today)에 대한 결정적 시드를 돌려줌.
+// dailyPickSeed는 (subscriberID, 서비스의 날짜)에 대한 결정적 시드를 돌려줘요.
 // SHA-256을 사용하므로 작은 입력 범위에서도 분포가 고르게 나옴.
-//
-// today의 달력 날짜가 시드이므로 서비스 시간대(MAEILHAM_TZ)로 바꾼 시각을 넘겨야 함(Picker.pick이 그렇게 함).
-func dailyPickSeed(subscriberID int64, today time.Time) uint64 {
-	key := strconv.FormatInt(subscriberID, 10) + "|" + today.Format("2006-01-02")
+func dailyPickSeed(subscriberID int64, t time.Time, loc *time.Location) uint64 {
+	key := strconv.FormatInt(subscriberID, 10) + "|" + t.In(loc).Format("2006-01-02")
 	sum := sha256.Sum256([]byte(key))
 	return binary.BigEndian.Uint64(sum[:8])
 }

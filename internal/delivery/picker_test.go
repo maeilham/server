@@ -37,7 +37,7 @@ func idOf(c *store.Content) string {
 
 func mustToday(t *testing.T, s *Picker, repo string) *store.Content {
 	t.Helper()
-	c, err := s.ContentOfDay(context.Background(), repo)
+	c, err := s.contentOfDay(context.Background(), repo)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -294,7 +294,7 @@ func TestPicker_ChosenContentIsTheRepoContentOfDay(t *testing.T) {
 			if err != nil || got == nil {
 				t.Fatalf("day %d %s: got %v err=%v", i, name, got, err)
 			}
-			want, _ := p.ContentOfDay(context.Background(), got.RepoSlug)
+			want, _ := p.contentOfDay(context.Background(), got.RepoSlug)
 			if idOf(got) != idOf(want) {
 				t.Fatalf("day %d %s: picked %s but that repo's content of the day is %s", i, name, idOf(got), idOf(want))
 			}

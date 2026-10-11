@@ -1,7 +1,7 @@
 // Package delivery는 오늘의 질문을 정하고(Picker) 매일 메일을 발송하는(DailySend) 로직을 담음.
 //
 // 핵심 원칙: 같은 repo를 구독한 사용자는 같은 날 같은 콘텐츠를 받음(뉴스 모델).
-//   - 각 repo의 "오늘의 콘텐츠"는 Picker.ContentOfDay 하나로 결정됨
+//   - 각 repo의 "오늘의 콘텐츠"는 Picker.contentOfDay 하나로 결정됨
 //   - 사용자는 구독한 repo 중 가중치 확률로 1개 repo를 뽑고, 그 repo의 오늘 콘텐츠를 받음
 //   - 가중 추첨은 (구독자, 서비스의 날짜) 시드로 결정론적이라 재시도 시 동일 결과를 보장함
 package delivery
@@ -96,7 +96,7 @@ func (p *Picker) pick(ctx context.Context, seedID int64, repos []repoWeight) (*s
 	}
 	var candidates []candidate
 	for _, r := range repos {
-		c, err := p.ContentOfDay(ctx, r.slug)
+		c, err := p.contentOfDay(ctx, r.slug)
 		if err != nil {
 			return nil, fmt.Errorf("today content for %s: %w", r.slug, err)
 		}
@@ -115,8 +115,8 @@ func (p *Picker) pick(ctx context.Context, seedID int64, repos []repoWeight) (*s
 	return candidates[pickByWeight(weights, dailyPickSeed(seedID, day))].content, nil
 }
 
-// ContentOfDay는 그 repo의 오늘 글을 돌려줌. repo에 글이 하나도 없으면 (nil, nil).
-func (p *Picker) ContentOfDay(ctx context.Context, repoSlug string) (*store.Content, error) {
+// contentOfDay는 그 repo의 오늘 글을 돌려줌. repo에 글이 하나도 없으면 (nil, nil).
+func (p *Picker) contentOfDay(ctx context.Context, repoSlug string) (*store.Content, error) {
 	start, end := ServiceDay(p.now(), p.Loc)
 
 	// 1) 오늘 이미 나간 글이 있으면 그 글을 사용함. 발송 기록은 UTC로 저장되어 있으므로 하루를 시각 구간으로 비교함.

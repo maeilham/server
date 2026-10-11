@@ -178,7 +178,7 @@ func TestDailySend_PickSeedUsesServiceDate(t *testing.T) {
 		if err := db.QueryRow(`SELECT repo_slug FROM delivery_log ORDER BY id DESC LIMIT 1`).Scan(&got); err != nil {
 			t.Fatal(err)
 		}
-		want := []string{"a", "b"}[pickByWeight([]int{3, 3}, dailyPickSeed(id, kst))]
+		want := []string{"a", "b"}[pickByWeight([]int{3, 3}, dailyPickSeed(id, kst, testLoc))]
 		if got != want {
 			t.Fatalf("day %s: picked repo %q, want %q (seed must use the service-zone date)", kst.Format("2006-01-02"), got, want)
 		}

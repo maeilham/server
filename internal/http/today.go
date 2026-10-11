@@ -8,10 +8,10 @@ import (
 	"github.com/maeilham/server/internal/store"
 )
 
-// TodayPicker는 "오늘의 질문"을 정하는 쪽이다. delivery.TodayService가 구현한다.
+// TodayPicker는 "오늘의 질문"을 정하는 쪽이다. delivery.Picker가 구현한다(메일 발송과 같은 Picker다).
 type TodayPicker interface {
-	// ForVisitor returns 오늘의 질문 하나. 보여줄 글이 하나도 없으면 (nil, nil).
-	ForVisitor(ctx context.Context) (*store.Content, error)
+	// ForGuest returns 게스트의 오늘의 질문 하나. 보여줄 글이 하나도 없으면 (nil, nil).
+	ForGuest(ctx context.Context) (*store.Content, error)
 }
 
 type todayHandler struct {
@@ -36,7 +36,7 @@ type todayResponse struct {
 // handleGet은 GET /api/today 를 처리한다. 오늘 발송해야 할 글 하나를 돌려준다(방문자용).
 // 상태 코드: 200 / 404(보여줄 글이 하나도 없음) / 500
 func (h *todayHandler) handleGet(w http.ResponseWriter, r *http.Request) {
-	c, err := h.picker.ForVisitor(r.Context())
+	c, err := h.picker.ForGuest(r.Context())
 	if err != nil {
 		h.logger.Error("today question", "err", err)
 		jsonError(w, "서버 오류", http.StatusInternalServerError)

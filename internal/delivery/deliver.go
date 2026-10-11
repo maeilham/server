@@ -5,6 +5,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -53,11 +54,12 @@ type DailySendStats struct {
 }
 
 type DailySendOptions struct {
-	Day       time.Time // 보통 time.Now(). 테스트/디버깅용으로 주입 가능
-	DryRun    bool      // true면 실제 발송 없이 결정만 로그
-	BaseURL   string    // 웹 프론트 URL (리다이렉트용)
-	APIURL    string    // API 서버 URL (메일 링크용)
-	Secret    string    // HMAC 서명 키 (unsubscribe 토큰 생성)
+	Day       time.Time      // 보통 time.Now(). 테스트/디버깅용으로 주입 가능. 어느 시간대 표기든 Loc 기준의 하루로 바뀐다
+	Loc       *time.Location // 서비스의 하루를 나누는 시간대(MAEILHAM_TZ). 필수 — 빠뜨리면 하루가 UTC로 계산되는 버그가 되살아난다
+	DryRun    bool           // true면 실제 발송 없이 결정만 로그
+	BaseURL   string         // 웹 프론트 URL (리다이렉트용)
+	APIURL    string         // API 서버 URL (메일 링크용)
+	Secret    string         // HMAC 서명 키 (unsubscribe 토큰 생성)
 	GitHubApp *gh.App
 
 	SubRepo      store.SubscriberRepository
@@ -78,6 +80,14 @@ func DailySend(
 ) (*DailySendStats, error) {
 	stats := &DailySendStats{DryRun: opts.DryRun}
 
+	if opts.Loc == nil {
+		return stats, errors.New("DailySendOptions.Loc is required (service time zone, MAEILHAM_TZ)")
+	}
+	// "오늘"은 서비스 시간대의 하루 구간이다. 발송 여부와 로테이션 넘김을 모두 이 구간으로 판단하고,
+	// 추첨 시드의 날짜도 같은 시간대의 날짜를 쓴다(웹의 오늘의 질문과 같은 규칙이다).
+	dayStart, dayEnd := ServiceDay(opts.Day, opts.Loc)
+	day := opts.Day.In(opts.Loc)
+
 	subs, err := opts.SubRepo.ListActive(ctx)
 	if err != nil {
 		return stats, fmt.Errorf("load subscribers: %w", err)
@@ -93,7 +103,7 @@ func DailySend(
 	for _, sub := range subs {
 		l := logger.With("subscriber_id", sub.ID, "email", sub.Email)
 
-		already, err := opts.LogStore.AlreadySentToday(ctx, sub.ID, opts.Day)
+		already, err := opts.LogStore.AlreadySent(ctx, sub.ID, dayStart, dayEnd)
 		if err != nil {
 			l.Error("check already-delivered", "err", err)
 			stats.Errors++
@@ -104,7 +114,7 @@ func DailySend(
 			continue
 		}
 
-		content, err := PickForSubscriber(ctx, opts.SubRepo, opts.ContentStore, sub.ID, opts.Day)
+		content, err := PickForSubscriber(ctx, opts.SubRepo, opts.ContentStore, sub.ID, day)
 		if err != nil {
 			l.Error("pick", "err", err)
 			stats.Errors++
@@ -165,7 +175,7 @@ func DailySend(
 	}
 
 	if !opts.DryRun {
-		advanced, err := opts.ContentStore.AdvanceRotation(ctx, opts.Day)
+		advanced, err := opts.ContentStore.AdvanceRotation(ctx, dayStart, dayEnd, opts.Day)
 		if err != nil {
 			logger.Error("advance rotation", "err", err)
 			stats.Errors++

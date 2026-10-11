@@ -217,3 +217,55 @@ func TestSetAuthoredAt_OnlyWhenEmpty(t *testing.T) {
 		t.Errorf("덮어써짐: %s", got)
 	}
 }
+
+// AdvanceRotation: 구간 안에 발송된 글만 넘기고, 같은 구간 안에서는 두 번 넘기지 않는다.
+func TestAdvanceRotation_ServiceDayInterval(t *testing.T) {
+	db := newTestDB(t)
+	insertRepo(t, db, "be", "백엔드", 1)
+	for _, id := range []string{"0001", "0002", "0003"} {
+		insertContent(t, db, "be", id, id)
+	}
+	sub := insertSubscriber(t, db)
+	cs := store.NewContentStore(db)
+	ctx := context.Background()
+
+	kst := time.FixedZone("KST", 9*3600)
+	from := time.Date(2026, 9, 20, 0, 0, 0, 0, kst)
+	to := from.AddDate(0, 0, 1)
+	utc := func(s string) time.Time {
+		tm, err := time.Parse("2006-01-02 15:04:05", s)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return tm
+	}
+	insertDelivery(t, db, sub, "be", "0001", "2026-09-19 14:59:59") // 구간 직전: 전날
+	insertDelivery(t, db, sub, "be", "0002", "2026-09-19 22:00:00") // 07:00 KST: 포함
+	insertDelivery(t, db, sub, "be", "0003", "2026-09-20 15:00:00") // 구간 끝(미포함): 다음 날
+
+	rotation := func(id string) int {
+		var n int
+		if err := db.QueryRow(`SELECT rotation_count FROM contents WHERE content_id = ?`, id).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+
+	n, err := cs.AdvanceRotation(ctx, from, to, utc("2026-09-19 22:00:00"))
+	if err != nil || n != 1 {
+		t.Fatalf("advanced %d (err %v), want 1", n, err)
+	}
+	if rotation("0001") != 0 || rotation("0002") != 1 || rotation("0003") != 0 {
+		t.Errorf("rotation 0001=%d 0002=%d 0003=%d, want 0,1,0", rotation("0001"), rotation("0002"), rotation("0003"))
+	}
+	// 같은 하루에 다시 실행(UTC 날짜가 다른 10:00 KST)해도 이미 넘긴 글은 넘기지 않는다
+	n, err = cs.AdvanceRotation(ctx, from, to, utc("2026-09-20 01:00:00"))
+	if err != nil || n != 0 || rotation("0002") != 1 {
+		t.Errorf("rerun in the same service day: advanced %d (err %v), 0002 rotation=%d, want 0 and 1", n, err, rotation("0002"))
+	}
+	// 다음 서비스 하루에는 그날 나간 글을 넘긴다
+	n, err = cs.AdvanceRotation(ctx, to, to.AddDate(0, 0, 1), utc("2026-09-20 22:00:00"))
+	if err != nil || n != 1 || rotation("0003") != 1 {
+		t.Errorf("next day: advanced %d (err %v), 0003 rotation=%d, want 1 and 1", n, err, rotation("0003"))
+	}
+}

@@ -75,9 +75,7 @@ func (s *TodayService) ForVisitor(ctx context.Context) (*store.Content, error) {
 
 // ContentOfDay returns 그 repo의 오늘 글. repo에 글이 하나도 없으면 (nil, nil).
 func (s *TodayService) ContentOfDay(ctx context.Context, repoSlug string) (*store.Content, error) {
-	now := s.now().In(s.Loc)
-	start := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, s.Loc)
-	end := start.AddDate(0, 0, 1)
+	start, end := ServiceDay(s.now(), s.Loc)
 
 	// 1) 오늘 이미 나간 글이 있으면 그 글. 발송 기록은 UTC로 저장돼 있으므로 하루를 시각 구간으로 비교한다.
 	if id, found, err := s.Log.LastDeliveredContentID(ctx, repoSlug, start, end); err != nil {

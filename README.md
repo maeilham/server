@@ -86,7 +86,7 @@ curl -s localhost:8080/api/contents/backend-ops/0001 | jq
 | `MAEILHAM_DB`                     | -    | SQLite 경로 (기본: `./data/maeilham.db`) |
 | `MAEILHAM_HTTP_ADDR`              | -    | HTTP 주소 (기본: `:8080`)                |
 | `MAEILHAM_SSH_ADDR`               | -    | SSH 주소 (기본: `:2222`)                 |
-| `MAEILHAM_TZ`                     | -    | 서비스의 "하루"를 나누는 시간대. 오늘의 질문에 쓰임 (기본: `Asia/Seoul`) |
+| `MAEILHAM_TZ`                     | -    | 서비스의 "하루"를 나누는 시간대. 오늘의 질문과 발송 배치(중복 발송 방지, 로테이션 넘김, 추첨 시드)에 쓰임 (기본: `Asia/Seoul`) |
 | `MAEILHAM_BASE_URL`               | -    | 웹 프론트 URL                            |
 | `MAEILHAM_API_URL`                | -    | API 서버 URL                             |
 | `MAEILHAM_SECRET`                 | ✓    | 토큰 서명 키 (개발 기본값이 있지만 운영에서는 반드시 변경) |
@@ -114,7 +114,7 @@ maeilham repo deactivate --slug <slug>
 maeilham sync [--repo <slug>]
 
 # 메일 발송
-maeilham send-daily [--dry-run] [--date YYYY-MM-DD]
+maeilham send-daily [--dry-run] [--date YYYY-MM-DD]   # --date는 MAEILHAM_TZ 시간대의 그날
 maeilham send-test --to <email>
 
 # 유틸

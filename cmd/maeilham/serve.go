@@ -18,9 +18,9 @@ import (
 type ServeCmd struct{}
 
 func (c *ServeCmd) Run(ctx context.Context, d *deps) error {
-	loc, err := time.LoadLocation(d.cfg.TimeZone)
+	loc, err := d.location()
 	if err != nil {
-		return fmt.Errorf("MAEILHAM_TZ %q: %w", d.cfg.TimeZone, err)
+		return err
 	}
 
 	subSvc := subscriber.NewSubscriberService(d.subRepo, d.mailer(), d.cfg.Secret, d.cfg.APIURL, d.cfg.BaseURL)

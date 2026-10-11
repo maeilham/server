@@ -83,7 +83,7 @@ func RenderLink(linkURL string) (subject, text, html string) {
 // 새 링크는 응답이 아니라 이 메일로만 전달된다(링크가 유출돼 누가 재발급을 눌러도 새 링크는 주인만 받는다).
 func RenderRotatedLink(linkURL string) (subject, text, html string) {
 	subject = "[매일함] 새 링크가 도착했어요"
-	text = fmt.Sprintf(`'내 링크 다시 만들기'가 요청돼서 새 링크를 보내요.
+	text = fmt.Sprintf(`'나만의 링크 새로 받기'가 요청돼서 새 링크를 보내요.
 이전 링크는 이제 쓸 수 없어요. 아래 링크로 다시 들어와 주세요.
 
 %s

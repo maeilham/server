@@ -28,6 +28,9 @@ import (
 //
 // The pick is deterministic for a given (subscriberID, today): retries on the
 // same day return the same content. This makes retries idempotent.
+//
+// today의 달력 날짜가 시드가 되므로, 호출하는 쪽은 서비스 시간대(MAEILHAM_TZ)로 바꾼 시각을 넘겨야 한다
+// (DailySend는 opts.Day.In(opts.Loc), TodayService는 now.In(Loc)). 다른 표기를 넘기면 하루가 바뀌는 시각이 어긋난다.
 func PickForSubscriber(
 	ctx context.Context,
 	subRepo store.SubscriberRepository,

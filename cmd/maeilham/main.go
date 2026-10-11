@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 	_ "time/tzdata"
 
 	"github.com/alecthomas/kong"
@@ -74,6 +75,15 @@ type deps struct {
 	contentStore store.ContentRepository
 	logStore     store.DeliveryLogRepository
 	subRepo      store.SubscriberRepository
+}
+
+// location은 서비스의 "하루"를 나누는 시간대(MAEILHAM_TZ)를 돌려준다. serve와 send-daily가 같은 값을 쓴다.
+func (d *deps) location() (*time.Location, error) {
+	loc, err := time.LoadLocation(d.cfg.TimeZone)
+	if err != nil {
+		return nil, fmt.Errorf("MAEILHAM_TZ %q: %w", d.cfg.TimeZone, err)
+	}
+	return loc, nil
 }
 
 func (d *deps) ghApp() *gh.App {

@@ -23,7 +23,7 @@ type fakePicker struct {
 	err error
 }
 
-func (f *fakePicker) ForVisitor(context.Context) (*store.Content, error) { return f.c, f.err }
+func (f *fakePicker) ForGuest(context.Context) (*store.Content, error) { return f.c, f.err }
 
 func getToday(t *testing.T, p TodayPicker) *httptest.ResponseRecorder {
 	t.Helper()
@@ -100,7 +100,7 @@ func TestToday_BrokenTagsBecomeEmptyArray(t *testing.T) {
 	}
 }
 
-// 실제 저장소 + 실제 라우터 + 실제 TodayService: 경로 등록과 발송 전/후/다음 날 흐름을 끝까지 확인한다.
+// 실제 저장소 + 실제 라우터 + 실제 Picker: 경로 등록과 발송 전/후/다음 날 흐름을 끝까지 확인한다.
 func TestToday_ThroughRealRouter(t *testing.T) {
 	conn, err := dbpkg.Open(":memory:")
 	if err != nil {
@@ -125,7 +125,7 @@ func TestToday_ThroughRealRouter(t *testing.T) {
 	now := time.Date(2026, 9, 20, 6, 0, 0, 0, kst) // 발송 전
 	router := NewRouter(Deps{
 		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
-		Today: &delivery.TodayService{
+		Today: &delivery.Picker{
 			Repos: store.NewRepoStore(conn), Contents: store.NewContentStore(conn), Log: store.NewDeliveryLogStore(conn),
 			Loc: kst, Now: func() time.Time { return now },
 		},
@@ -177,7 +177,7 @@ func TestToday_NoContentIs404ThroughRealRouter(t *testing.T) {
 	t.Cleanup(func() { _ = conn.Close() })
 	router := NewRouter(Deps{
 		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
-		Today: &delivery.TodayService{
+		Today: &delivery.Picker{
 			Repos: store.NewRepoStore(conn), Contents: store.NewContentStore(conn), Log: store.NewDeliveryLogStore(conn),
 			Loc: time.UTC,
 		},

@@ -83,10 +83,17 @@ func DailySend(
 	if opts.Loc == nil {
 		return stats, errors.New("DailySendOptions.Loc is required (service time zone, MAEILHAM_TZ)")
 	}
-	// "오늘"은 서비스 시간대의 하루 구간이다. 발송 여부와 로테이션 넘김을 모두 이 구간으로 판단하고,
-	// 추첨 시드의 날짜도 같은 시간대의 날짜를 쓴다(웹의 오늘의 질문과 같은 규칙이다).
+	// "오늘"은 서비스 시간대의 하루 구간이다. 발송 여부와 로테이션 넘김을 모두 이 구간으로 판단한다.
 	dayStart, dayEnd := ServiceDay(opts.Day, opts.Loc)
-	day := opts.Day.In(opts.Loc)
+	// 오늘의 질문은 API와 같은 Picker로 정한다. 기준 시각만 발송 기준 시각(opts.Day)으로 고정한다.
+	picker := &Picker{
+		Repos:    opts.RepoStore,
+		Subs:     opts.SubRepo,
+		Contents: opts.ContentStore,
+		Log:      opts.LogStore,
+		Loc:      opts.Loc,
+		Now:      func() time.Time { return opts.Day },
+	}
 
 	subs, err := opts.SubRepo.ListActive(ctx)
 	if err != nil {
@@ -114,7 +121,7 @@ func DailySend(
 			continue
 		}
 
-		content, err := PickForSubscriber(ctx, opts.SubRepo, opts.ContentStore, sub.ID, day)
+		content, err := picker.ForSubscriber(ctx, sub.ID)
 		if err != nil {
 			l.Error("pick", "err", err)
 			stats.Errors++

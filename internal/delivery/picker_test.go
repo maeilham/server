@@ -11,10 +11,11 @@ import (
 
 var kst = time.FixedZone("KST", 9*3600)
 
-// newToday는 실제 SQLite 저장소와 고정된 시각으로 TodayService를 만든다.
-func newToday(db *sql.DB, now time.Time) *TodayService {
-	return &TodayService{
+// newToday는 실제 SQLite 저장소와 고정된 시각으로 Picker를 만든다.
+func newToday(db *sql.DB, now time.Time) *Picker {
+	return &Picker{
 		Repos:    store.NewRepoStore(db),
+		Subs:     store.NewSubscriberStore(db),
 		Contents: store.NewContentStore(db),
 		Log:      store.NewDeliveryLogStore(db),
 		Loc:      kst,
@@ -36,7 +37,7 @@ func idOf(c *store.Content) string {
 	return c.RepoSlug + "/" + c.ContentID
 }
 
-func mustToday(t *testing.T, s *TodayService, repo string) *store.Content {
+func mustToday(t *testing.T, s *Picker, repo string) *store.Content {
 	t.Helper()
 	c, err := s.ContentOfDay(context.Background(), repo)
 	if err != nil {
@@ -153,46 +154,46 @@ func TestContentOfDay_ReturnsFullRow(t *testing.T) {
 	}
 }
 
-// ── 방문자용 오늘의 질문 ─────────────────────────────────────────────────────
+// ── 게스트용 오늘의 질문 ─────────────────────────────────────────────────────
 
-func TestForVisitor_SingleRepo(t *testing.T) {
+func TestForGuest_SingleRepo(t *testing.T) {
 	db := newTestDB(t)
 	insertRepo(t, db, "be")
 	insertContent(t, db, "be", "0001")
-	got, err := newToday(db, time.Date(2026, 9, 20, 6, 0, 0, 0, kst)).ForVisitor(context.Background())
+	got, err := newToday(db, time.Date(2026, 9, 20, 6, 0, 0, 0, kst)).ForGuest(context.Background())
 	if err != nil || idOf(got) != "be/0001" {
 		t.Errorf("got %s err=%v, want be/0001", idOf(got), err)
 	}
 }
 
-func TestForVisitor_NothingToShow(t *testing.T) {
+func TestForGuest_NothingToShow(t *testing.T) {
 	db := newTestDB(t)
-	got, err := newToday(db, time.Date(2026, 9, 20, 6, 0, 0, 0, kst)).ForVisitor(context.Background())
+	got, err := newToday(db, time.Date(2026, 9, 20, 6, 0, 0, 0, kst)).ForGuest(context.Background())
 	if err != nil || got != nil {
 		t.Errorf("repo가 없으면 (nil, nil): got %s err=%v", idOf(got), err)
 	}
 	insertRepo(t, db, "be") // repo는 있지만 글이 없다
-	got, err = newToday(db, time.Date(2026, 9, 20, 6, 0, 0, 0, kst)).ForVisitor(context.Background())
+	got, err = newToday(db, time.Date(2026, 9, 20, 6, 0, 0, 0, kst)).ForGuest(context.Background())
 	if err != nil || got != nil {
 		t.Errorf("글이 없으면 (nil, nil): got %s err=%v", idOf(got), err)
 	}
 }
 
-func TestForVisitor_SkipsReposWithoutContent(t *testing.T) {
+func TestForGuest_SkipsReposWithoutContent(t *testing.T) {
 	db := newTestDB(t)
 	insertRepo(t, db, "aa") // 글 없음
 	insertRepo(t, db, "zz")
 	insertContent(t, db, "zz", "0001")
 	for day := 1; day <= 30; day++ {
 		s := newToday(db, time.Date(2026, 9, day, 12, 0, 0, 0, kst))
-		if got, _ := s.ForVisitor(context.Background()); idOf(got) != "zz/0001" {
+		if got, _ := s.ForGuest(context.Background()); idOf(got) != "zz/0001" {
 			t.Fatalf("9/%d: got %s, want zz/0001 (글이 없는 repo가 뽑히면 안 됨)", day, idOf(got))
 		}
 	}
 }
 
 // 같은 날은 누가 언제 물어도 같은 글이고, 날이 바뀌면 repo가 고르게 섞여 나온다.
-func TestForVisitor_DeterministicPerDayAndBalancedAcrossDays(t *testing.T) {
+func TestForGuest_DeterministicPerDayAndBalancedAcrossDays(t *testing.T) {
 	db := newTestDB(t)
 	insertRepo(t, db, "be")
 	insertRepo(t, db, "fe")
@@ -204,8 +205,8 @@ func TestForVisitor_DeterministicPerDayAndBalancedAcrossDays(t *testing.T) {
 		day := time.Date(2026, 1, 1, 0, 0, 0, 0, kst).AddDate(0, 0, i)
 		morning := newToday(db, day.Add(1*time.Hour))
 		evening := newToday(db, day.Add(22*time.Hour))
-		a, _ := morning.ForVisitor(context.Background())
-		b, _ := evening.ForVisitor(context.Background())
+		a, _ := morning.ForGuest(context.Background())
+		b, _ := evening.ForGuest(context.Background())
 		if idOf(a) != idOf(b) {
 			t.Fatalf("%s: 같은 날 아침(%s)과 저녁(%s)이 다름", day.Format("2006-01-02"), idOf(a), idOf(b))
 		}
@@ -217,7 +218,7 @@ func TestForVisitor_DeterministicPerDayAndBalancedAcrossDays(t *testing.T) {
 }
 
 // 하루의 기준은 서비스 시간대(KST)다. 같은 순간을 UTC로 표현해도 결과가 같아야 한다.
-func TestForVisitor_UsesServiceTimeZoneForTheDay(t *testing.T) {
+func TestForGuest_UsesServiceTimeZoneForTheDay(t *testing.T) {
 	db := newTestDB(t)
 	insertRepo(t, db, "be")
 	insertRepo(t, db, "fe")
@@ -226,9 +227,9 @@ func TestForVisitor_UsesServiceTimeZoneForTheDay(t *testing.T) {
 
 	for i := 0; i < 60; i++ {
 		instant := time.Date(2026, 3, 1, 0, 30, 0, 0, kst).AddDate(0, 0, i) // 매일 KST 00:30 = UTC 전날 15:30
-		inKST, _ := newToday(db, instant.In(kst)).ForVisitor(context.Background())
-		inUTC, _ := newToday(db, instant.UTC()).ForVisitor(context.Background())
-		sameDayNoon, _ := newToday(db, time.Date(instant.In(kst).Year(), instant.In(kst).Month(), instant.In(kst).Day(), 12, 0, 0, 0, kst)).ForVisitor(context.Background())
+		inKST, _ := newToday(db, instant.In(kst)).ForGuest(context.Background())
+		inUTC, _ := newToday(db, instant.UTC()).ForGuest(context.Background())
+		sameDayNoon, _ := newToday(db, time.Date(instant.In(kst).Year(), instant.In(kst).Month(), instant.In(kst).Day(), 12, 0, 0, 0, kst)).ForGuest(context.Background())
 		if idOf(inKST) != idOf(inUTC) || idOf(inKST) != idOf(sameDayNoon) {
 			t.Fatalf("%s: KST=%s UTC표현=%s 같은날 정오=%s", instant.In(kst).Format("2006-01-02 15:04"), idOf(inKST), idOf(inUTC), idOf(sameDayNoon))
 		}
@@ -236,7 +237,7 @@ func TestForVisitor_UsesServiceTimeZoneForTheDay(t *testing.T) {
 }
 
 // 방문자 추첨이 고른 repo의 글은 그 repo의 오늘 글과 같아야 한다(발송 후에도).
-func TestForVisitor_AfterSendShowsDeliveredContent(t *testing.T) {
+func TestForGuest_AfterSendShowsDeliveredContent(t *testing.T) {
 	db := newTestDB(t)
 	sub := insertConfirmedSubscriber(t, db, "a@example.com")
 	insertRepo(t, db, "be")
@@ -245,7 +246,7 @@ func TestForVisitor_AfterSendShowsDeliveredContent(t *testing.T) {
 	deliver(t, db, sub, "be", "0001", "2026-09-19 22:00:00")
 	mustExec(t, db, `UPDATE contents SET rotation_count = 1 WHERE content_id = '0001'`)
 
-	got, _ := newToday(db, time.Date(2026, 9, 20, 18, 0, 0, 0, kst)).ForVisitor(context.Background())
+	got, _ := newToday(db, time.Date(2026, 9, 20, 18, 0, 0, 0, kst)).ForGuest(context.Background())
 	if idOf(got) != "be/0001" {
 		t.Errorf("got %s, want be/0001", idOf(got))
 	}
@@ -267,6 +268,130 @@ func TestPickByWeight(t *testing.T) {
 	for _, tc := range cases {
 		if got := pickByWeight(tc.weights, tc.seed); got != tc.want {
 			t.Errorf("pickByWeight(%v, %d) = %d, want %d", tc.weights, tc.seed, got, tc.want)
+		}
+	}
+}
+
+// ── 메일과 API가 같은 Picker를 쓴다 ──────────────────────────────────────────
+
+// 같은 repo의 같은 날은 누구에게나 같은 글이다. 게스트든 구독자든 뽑힌 repo의 글은 그 repo의 오늘 글이어야 한다.
+func TestPicker_ChosenContentIsTheRepoContentOfDay(t *testing.T) {
+	db := newTestDB(t)
+	sub := insertConfirmedSubscriber(t, db, "a@example.com")
+	insertRepo(t, db, "be")
+	insertRepo(t, db, "fe")
+	insertContent(t, db, "be", "0001")
+	insertContent(t, db, "be", "0002")
+	insertContent(t, db, "fe", "0001")
+	subscribe(t, db, sub, "be", 3)
+	subscribe(t, db, sub, "fe", 3)
+
+	for i := 0; i < 60; i++ {
+		p := pickerAt(db, time.Date(2026, 6, 1, 12, 0, 0, 0, kst).AddDate(0, 0, i))
+		for name, pick := range map[string]func() (*store.Content, error){
+			"guest":      func() (*store.Content, error) { return p.ForGuest(context.Background()) },
+			"subscriber": func() (*store.Content, error) { return p.ForSubscriber(context.Background(), sub) },
+		} {
+			got, err := pick()
+			if err != nil || got == nil {
+				t.Fatalf("day %d %s: got %v err=%v", i, name, got, err)
+			}
+			want, _ := p.ContentOfDay(context.Background(), got.RepoSlug)
+			if idOf(got) != idOf(want) {
+				t.Fatalf("day %d %s: picked %s but that repo's content of the day is %s", i, name, idOf(got), idOf(want))
+			}
+		}
+	}
+}
+
+// 메일 배치가 보내는 글은 같은 구독자에게 API(같은 Picker)가 돌려주는 글과 같아야 한다.
+func TestDailySend_SendsWhatThePickerReturnsForThatSubscriber(t *testing.T) {
+	db := newTestDB(t)
+	sub := insertConfirmedSubscriber(t, db, "a@example.com")
+	insertRepo(t, db, "be")
+	insertRepo(t, db, "fe")
+	insertContent(t, db, "be", "0001")
+	insertContent(t, db, "fe", "0001")
+	subscribe(t, db, sub, "be", 3)
+	subscribe(t, db, sub, "fe", 3)
+
+	for i := 0; i < 40; i++ {
+		sendAt := time.Date(2026, 6, 1, 7, 0, 0, 0, testLoc).AddDate(0, 0, i) // 매일 07:00 KST
+		want, err := pickerAt(db, sendAt).ForSubscriber(context.Background(), sub)
+		if err != nil || want == nil {
+			t.Fatalf("day %d: picker got %v err=%v", i, want, err)
+		}
+		if _, err := DailySend(context.Background(), discardLogger(), &mockMailer{}, DailySendOptions{
+			Day: sendAt, Loc: testLoc,
+			SubRepo: store.NewSubscriberStore(db), RepoStore: store.NewRepoStore(db),
+			ContentStore: store.NewContentStore(db), LogStore: store.NewDeliveryLogStore(db),
+		}); err != nil {
+			t.Fatal(err)
+		}
+		var repo, content string
+		if err := db.QueryRow(`SELECT repo_slug, content_id FROM delivery_log ORDER BY id DESC LIMIT 1`).Scan(&repo, &content); err != nil {
+			t.Fatal(err)
+		}
+		if repo+"/"+content != idOf(want) {
+			t.Fatalf("day %d: mail sent %s/%s, picker returns %s", i, repo, content, idOf(want))
+		}
+	}
+}
+
+// 이슈 #2에 남아 있던 한계: 발송이 끝나 로테이션이 넘어간 뒤 같은 날 재실행하면, 뒤늦게 가입한 구독자는
+// 이미 넘어간 "다음 글"을 받았다. 같은 repo의 같은 날은 모두에게 같은 글이어야 한다.
+func TestDailySend_LateSubscriberGetsTheSameContentAsEveryoneToday(t *testing.T) {
+	db := newTestDB(t)
+	early := insertConfirmedSubscriber(t, db, "early@example.com")
+	insertRepo(t, db, "be")
+	insertContent(t, db, "be", "0001")
+	insertContent(t, db, "be", "0002")
+	subscribe(t, db, early, "be", 3)
+
+	run := func(at time.Time) {
+		t.Helper()
+		if _, err := DailySend(context.Background(), discardLogger(), &mockMailer{}, DailySendOptions{
+			Day: at, Loc: testLoc,
+			SubRepo: store.NewSubscriberStore(db), RepoStore: store.NewRepoStore(db),
+			ContentStore: store.NewContentStore(db), LogStore: store.NewDeliveryLogStore(db),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	run(time.Date(2026, 5, 27, 7, 0, 0, 0, testLoc)) // 정기 발송: 0001이 나가고 로테이션이 0002를 가리킨다
+
+	late := insertConfirmedSubscriber(t, db, "late@example.com") // 발송 뒤에 가입
+	subscribe(t, db, late, "be", 3)
+	run(time.Date(2026, 5, 27, 10, 0, 0, 0, testLoc)) // 같은 날 재실행
+
+	contentOf := func(id int64) string {
+		var c string
+		if err := db.QueryRow(`SELECT content_id FROM delivery_log WHERE subscriber_id = ?`, id).Scan(&c); err != nil {
+			t.Fatalf("subscriber %d has no delivery: %v", id, err)
+		}
+		return c
+	}
+	if e, l := contentOf(early), contentOf(late); e != "0001" || l != "0001" {
+		t.Errorf("early got %s, late got %s, want both 0001 (the content of the day)", e, l)
+	}
+}
+
+// 게스트는 "활성 repo를 모두 같은 가중치로 구독한 id 0의 가상 구독자"다. 이 약속이 바뀌면 같은 날 게스트가 보는 repo가
+// 바뀌므로 고정해 둔다(실제 구독자 id는 1부터라 겹치지 않는다).
+func TestForGuest_IsTheVirtualSubscriberZero(t *testing.T) {
+	db := newTestDB(t)
+	insertRepo(t, db, "be")
+	insertRepo(t, db, "fe")
+	insertContent(t, db, "be", "0001")
+	insertContent(t, db, "fe", "0001")
+
+	slugs := []string{"be", "fe"} // ListActive는 slug 순
+	for i := 0; i < 60; i++ {
+		now := time.Date(2026, 6, 1, 12, 0, 0, 0, kst).AddDate(0, 0, i)
+		want := slugs[pickByWeight([]int{1, 1}, dailyPickSeed(0, now))]
+		got, err := pickerAt(db, now).ForGuest(context.Background())
+		if err != nil || got == nil || got.RepoSlug != want {
+			t.Fatalf("day %d: got %s err=%v, want repo %s (id 0 seed, equal weights)", i, idOf(got), err, want)
 		}
 	}
 }

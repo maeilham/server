@@ -63,6 +63,18 @@ func subscribe(t *testing.T, db *sql.DB, subID int64, repoSlug string, weight in
 		subID, repoSlug, weight)
 }
 
+// pickerAt은 실제 저장소와 고정된 기준 시각으로 Picker를 만든다(서비스 시간대는 KST).
+func pickerAt(db *sql.DB, now time.Time) *Picker {
+	return &Picker{
+		Repos:    store.NewRepoStore(db),
+		Subs:     store.NewSubscriberStore(db),
+		Contents: store.NewContentStore(db),
+		Log:      store.NewDeliveryLogStore(db),
+		Loc:      kst,
+		Now:      func() time.Time { return now },
+	}
+}
+
 func newStores(db *sql.DB) (store.SubscriberRepository, store.ContentRepository) {
 	return store.NewSubscriberStore(db), store.NewContentStore(db)
 }
@@ -120,18 +132,17 @@ func TestTodayForRepo_IgnoresDeleted(t *testing.T) {
 	}
 }
 
-// ---------------- PickForSubscriber ----------------
+// ---------------- ForSubscriber ----------------
 
-func TestPickForSubscriber_Unconfirmed(t *testing.T) {
+func TestForSubscriber_Unconfirmed(t *testing.T) {
 	db := newTestDB(t)
 	res, _ := db.Exec(`INSERT INTO subscribers(email) VALUES (?)`, "x@x.kr")
 	id, _ := res.LastInsertId()
 	insertRepo(t, db, "be")
 	insertContent(t, db, "be", "0001")
 	subscribe(t, db, id, "be", 3)
-	ss, cs := newStores(db)
 
-	got, err := PickForSubscriber(context.Background(), ss, cs, id, time.Now())
+	got, err := pickerAt(db, time.Now()).ForSubscriber(context.Background(), id)
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -140,16 +151,15 @@ func TestPickForSubscriber_Unconfirmed(t *testing.T) {
 	}
 }
 
-func TestPickForSubscriber_Paused(t *testing.T) {
+func TestForSubscriber_Paused(t *testing.T) {
 	db := newTestDB(t)
 	id := insertConfirmedSubscriber(t, db, "x@x.kr")
 	mustExec(t, db, `UPDATE subscribers SET paused_at = CURRENT_TIMESTAMP WHERE id = ?`, id)
 	insertRepo(t, db, "be")
 	insertContent(t, db, "be", "0001")
 	subscribe(t, db, id, "be", 3)
-	ss, cs := newStores(db)
 
-	got, err := PickForSubscriber(context.Background(), ss, cs, id, time.Now())
+	got, err := pickerAt(db, time.Now()).ForSubscriber(context.Background(), id)
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -158,12 +168,11 @@ func TestPickForSubscriber_Paused(t *testing.T) {
 	}
 }
 
-func TestPickForSubscriber_NoSubscriptions(t *testing.T) {
+func TestForSubscriber_NoSubscriptions(t *testing.T) {
 	db := newTestDB(t)
 	id := insertConfirmedSubscriber(t, db, "x@x.kr")
-	ss, cs := newStores(db)
 
-	got, err := PickForSubscriber(context.Background(), ss, cs, id, time.Now())
+	got, err := pickerAt(db, time.Now()).ForSubscriber(context.Background(), id)
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -172,14 +181,13 @@ func TestPickForSubscriber_NoSubscriptions(t *testing.T) {
 	}
 }
 
-func TestPickForSubscriber_NoEligibleContent(t *testing.T) {
+func TestForSubscriber_NoEligibleContent(t *testing.T) {
 	db := newTestDB(t)
 	id := insertConfirmedSubscriber(t, db, "x@x.kr")
 	insertRepo(t, db, "be") // no contents
 	subscribe(t, db, id, "be", 3)
-	ss, cs := newStores(db)
 
-	got, err := PickForSubscriber(context.Background(), ss, cs, id, time.Now())
+	got, err := pickerAt(db, time.Now()).ForSubscriber(context.Background(), id)
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -188,15 +196,14 @@ func TestPickForSubscriber_NoEligibleContent(t *testing.T) {
 	}
 }
 
-func TestPickForSubscriber_SingleSubscription(t *testing.T) {
+func TestForSubscriber_SingleSubscription(t *testing.T) {
 	db := newTestDB(t)
 	id := insertConfirmedSubscriber(t, db, "x@x.kr")
 	insertRepo(t, db, "be")
 	insertContent(t, db, "be", "0001")
 	subscribe(t, db, id, "be", 3)
-	ss, cs := newStores(db)
 
-	got, err := PickForSubscriber(context.Background(), ss, cs, id, time.Now())
+	got, err := pickerAt(db, time.Now()).ForSubscriber(context.Background(), id)
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -205,7 +212,7 @@ func TestPickForSubscriber_SingleSubscription(t *testing.T) {
 	}
 }
 
-func TestPickForSubscriber_IgnoresInactiveRepo(t *testing.T) {
+func TestForSubscriber_IgnoresInactiveRepo(t *testing.T) {
 	db := newTestDB(t)
 	id := insertConfirmedSubscriber(t, db, "x@x.kr")
 	insertRepo(t, db, "be")
@@ -215,9 +222,8 @@ func TestPickForSubscriber_IgnoresInactiveRepo(t *testing.T) {
 	insertContent(t, db, "fe", "0001")
 	subscribe(t, db, id, "be", 5)
 	subscribe(t, db, id, "fe", 1)
-	ss, cs := newStores(db)
 
-	got, err := PickForSubscriber(context.Background(), ss, cs, id, time.Now())
+	got, err := pickerAt(db, time.Now()).ForSubscriber(context.Background(), id)
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -226,7 +232,7 @@ func TestPickForSubscriber_IgnoresInactiveRepo(t *testing.T) {
 	}
 }
 
-func TestPickForSubscriber_DeterministicSameDay(t *testing.T) {
+func TestForSubscriber_DeterministicSameDay(t *testing.T) {
 	db := newTestDB(t)
 	id := insertConfirmedSubscriber(t, db, "x@x.kr")
 	insertRepo(t, db, "be")
@@ -235,19 +241,18 @@ func TestPickForSubscriber_DeterministicSameDay(t *testing.T) {
 	insertContent(t, db, "fe", "0001")
 	subscribe(t, db, id, "be", 3)
 	subscribe(t, db, id, "fe", 3)
-	ss, cs := newStores(db)
 
 	day := time.Date(2026, 5, 24, 0, 0, 0, 0, time.UTC)
-	first, _ := PickForSubscriber(context.Background(), ss, cs, id, day)
+	first, _ := pickerAt(db, day).ForSubscriber(context.Background(), id)
 	for range 5 {
-		got, _ := PickForSubscriber(context.Background(), ss, cs, id, day)
+		got, _ := pickerAt(db, day).ForSubscriber(context.Background(), id)
 		if got.RepoSlug != first.RepoSlug || got.ContentID != first.ContentID {
 			t.Fatalf("not deterministic: first=%v, retry=%v", first, got)
 		}
 	}
 }
 
-func TestPickForSubscriber_DifferentDayMayDiffer(t *testing.T) {
+func TestForSubscriber_DifferentDayMayDiffer(t *testing.T) {
 	db := newTestDB(t)
 	id := insertConfirmedSubscriber(t, db, "x@x.kr")
 	insertRepo(t, db, "be")
@@ -256,14 +261,13 @@ func TestPickForSubscriber_DifferentDayMayDiffer(t *testing.T) {
 	insertContent(t, db, "fe", "0001")
 	subscribe(t, db, id, "be", 3)
 	subscribe(t, db, id, "fe", 3)
-	ss, cs := newStores(db)
 
 	// 다양한 날짜를 시도해서 적어도 한 번은 다른 repo가 뽑히는지 확인
 	day0 := time.Date(2026, 5, 24, 0, 0, 0, 0, time.UTC)
-	first, _ := PickForSubscriber(context.Background(), ss, cs, id, day0)
+	first, _ := pickerAt(db, day0).ForSubscriber(context.Background(), id)
 	differs := false
 	for i := 1; i <= 60; i++ {
-		got, _ := PickForSubscriber(context.Background(), ss, cs, id, day0.AddDate(0, 0, i))
+		got, _ := pickerAt(db, day0.AddDate(0, 0, i)).ForSubscriber(context.Background(), id)
 		if got.RepoSlug != first.RepoSlug {
 			differs = true
 			break
@@ -274,13 +278,12 @@ func TestPickForSubscriber_DifferentDayMayDiffer(t *testing.T) {
 	}
 }
 
-func TestPickForSubscriber_WeightDistribution(t *testing.T) {
+func TestForSubscriber_WeightDistribution(t *testing.T) {
 	db := newTestDB(t)
 	insertRepo(t, db, "be")
 	insertRepo(t, db, "fe")
 	insertContent(t, db, "be", "0001")
 	insertContent(t, db, "fe", "0001")
-	ss, cs := newStores(db)
 
 	// 충분히 많은 구독자를 만들어 다른 시드로 분포 검증
 	beCount := 0
@@ -290,7 +293,7 @@ func TestPickForSubscriber_WeightDistribution(t *testing.T) {
 		id := insertConfirmedSubscriber(t, db, "u"+stringFromInt(i)+"@x.kr")
 		subscribe(t, db, id, "be", 5)
 		subscribe(t, db, id, "fe", 1)
-		got, _ := PickForSubscriber(context.Background(), ss, cs, id, time.Now())
+		got, _ := pickerAt(db, time.Now()).ForSubscriber(context.Background(), id)
 		switch got.RepoSlug {
 		case "be":
 			beCount++

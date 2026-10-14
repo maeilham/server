@@ -71,3 +71,52 @@ func TestMigration004_BackfillsAccessTokens(t *testing.T) {
 		t.Errorf("subscribers without a token should be allowed: %v", err)
 	}
 }
+
+// 006은 LastDeliveredContentID용 인덱스(003)만 지우고, 오늘의 질문 표(005)의 인덱스와 다른 인덱스는 그대로 둠.
+func TestMigration006_DropsOnlyTheDeliveryLogRepoSentIndex(t *testing.T) {
+	conn, err := Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn.SetMaxOpenConns(1)
+	t.Cleanup(func() { _ = conn.Close() })
+
+	// 005까지 적용한 상태(인덱스가 아직 있음)에서 006을 적용한다.
+	apply := func(name string) {
+		t.Helper()
+		b, err := migrationsFS.ReadFile(name)
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		if _, err := conn.Exec(string(b)); err != nil {
+			t.Fatalf("apply %s: %v", name, err)
+		}
+	}
+	for _, n := range []string{"001_init.sql", "002_authored_at.sql", "003_delivery_log_repo_sent.sql", "004_access_token.sql", "005_daily_question.sql"} {
+		apply(n)
+	}
+	has := func(index string) bool {
+		t.Helper()
+		var n int
+		if err := conn.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = ?`, index).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n == 1
+	}
+	if !has("idx_delivery_log_repo_sent") {
+		t.Fatal("setup: 003의 인덱스가 있어야 함")
+	}
+
+	apply("006_drop_delivery_log_repo_sent_index.sql")
+
+	if has("idx_delivery_log_repo_sent") {
+		t.Error("idx_delivery_log_repo_sent must be dropped by 006")
+	}
+	for _, keep := range []string{"idx_daily_question_content", "idx_delivery_log_subscriber", "idx_contents_pickorder"} {
+		if !has(keep) {
+			t.Errorf("%s must be kept", keep)
+		}
+	}
+	// 두 번 적용해도 실패하지 않음(IF EXISTS)
+	apply("006_drop_delivery_log_repo_sent_index.sql")
+}

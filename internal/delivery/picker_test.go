@@ -12,12 +12,12 @@ import (
 // newToday는 실제 SQLite 저장소와 고정된 시각으로 Picker를 만든다.
 func newToday(db *sql.DB, now time.Time) *Picker {
 	return &Picker{
-		Repos:    store.NewRepoStore(db),
-		Subs:     store.NewSubscriberStore(db),
-		Contents: store.NewContentStore(db),
-		Log:      store.NewDeliveryLogStore(db),
-		Loc:      kst,
-		Now:      func() time.Time { return now },
+		Repos:     store.NewRepoStore(db),
+		Subs:      store.NewSubscriberStore(db),
+		Contents:  store.NewContentStore(db),
+		Questions: store.NewDailyQuestionStore(db),
+		Loc:       kst,
+		Now:       func() time.Time { return now },
 	}
 }
 
@@ -28,14 +28,14 @@ func deliver(t *testing.T, db *sql.DB, subID int64, repo, contentID, sentAtUTC s
 		subID, repo, contentID, sentAtUTC)
 }
 
-func idOf(c *store.Content) string {
+func idOf(c *Question) string {
 	if c == nil {
 		return "<nil>"
 	}
 	return c.RepoSlug + "/" + c.ContentID
 }
 
-func mustToday(t *testing.T, s *Picker, repo string) *store.Content {
+func mustToday(t *testing.T, s *Picker, repo string) *Question {
 	t.Helper()
 	c, err := s.contentOfDay(context.Background(), repo)
 	if err != nil {
@@ -46,90 +46,95 @@ func mustToday(t *testing.T, s *Picker, repo string) *store.Content {
 
 // ── repo의 오늘 글 ───────────────────────────────────────────────────────────
 
-func TestContentOfDay_BeforeSendIsNextInRotation(t *testing.T) {
+// 첫날은 아직 안 나온 새 글이고 복습이 아님.
+func TestContentOfDay_FirstDayIsTheFirstNewContent(t *testing.T) {
 	db := newTestDB(t)
 	insertRepo(t, db, "be")
 	insertContent(t, db, "be", "0001")
 	insertContent(t, db, "be", "0002")
 
-	s := newToday(db, time.Date(2026, 9, 20, 6, 0, 0, 0, kst)) // 발송(07:00) 전
-	if got := idOf(mustToday(t, s, "be")); got != "be/0001" {
-		t.Errorf("got %s, want be/0001 (아직 한 번도 안 나갔으니 첫 글)", got)
+	q := mustToday(t, newToday(db, time.Date(2026, 9, 20, 6, 0, 0, 0, kst)), "be")
+	if idOf(q) != "be/0001" || q.Review {
+		t.Errorf("got %s review=%v, want be/0001 review=false", idOf(q), q.Review)
 	}
 }
 
-// 발송이 끝나면 로테이션이 넘어가 TodayForRepo는 내일 글을 가리킨다. 오늘의 글은 이미 나간 글이어야 한다.
-func TestContentOfDay_AfterSendIsTheDeliveredContent(t *testing.T) {
-	db := newTestDB(t)
-	sub := insertConfirmedSubscriber(t, db, "a@example.com")
-	insertRepo(t, db, "be")
-	insertContent(t, db, "be", "0001")
-	insertContent(t, db, "be", "0002")
-	// 오늘 KST 07:00(= UTC 전날 22:00)에 0001이 나갔고, 배치가 로테이션을 넘겼다
-	deliver(t, db, sub, "be", "0001", "2026-09-19 22:00:00")
-	mustExec(t, db, `UPDATE contents SET rotation_count = 1 WHERE content_id = '0001'`)
-
-	s := newToday(db, time.Date(2026, 9, 20, 15, 0, 0, 0, kst))
-	next, _ := store.NewContentStore(db).TodayForRepo(context.Background(), "be")
-	if next.ContentID != "0002" {
-		t.Fatalf("전제 확인: 발송 후 TodayForRepo는 다음 글(0002)이어야 함, got %s", next.ContentID)
-	}
-	if got := idOf(mustToday(t, s, "be")); got != "be/0001" {
-		t.Errorf("got %s, want be/0001 (오늘 나간 글. 내일 글이 보이면 안 됨)", got)
-	}
-}
-
-func TestContentOfDay_NextDayMovesOn(t *testing.T) {
+// 오늘의 질문은 발송과 무관함: 발송 기록이 생기거나 로테이션 값이 바뀌어도 하루 종일 같음.
+func TestContentOfDay_IsIndependentOfDeliveries(t *testing.T) {
 	db := newTestDB(t)
 	sub := insertConfirmedSubscriber(t, db, "a@example.com")
 	insertRepo(t, db, "be")
 	insertContent(t, db, "be", "0001")
 	insertContent(t, db, "be", "0002")
-	deliver(t, db, sub, "be", "0001", "2026-09-19 22:00:00") // 9/20 07:00 KST
-	mustExec(t, db, `UPDATE contents SET rotation_count = 1 WHERE content_id = '0001'`)
 
-	// 다음 날 00:10 KST: 어제 발송은 오늘 구간 밖이고, 오늘 발송은 아직 전이다
-	s := newToday(db, time.Date(2026, 9, 21, 0, 10, 0, 0, kst))
-	if got := idOf(mustToday(t, s, "be")); got != "be/0002" {
-		t.Errorf("got %s, want be/0002 (오늘 발송 전이니 로테이션의 다음 글)", got)
+	if got := idOf(mustToday(t, newToday(db, time.Date(2026, 9, 20, 6, 0, 0, 0, kst)), "be")); got != "be/0001" {
+		t.Fatalf("setup: got %s, want be/0001", got)
+	}
+	// 그 뒤에 다른 글이 발송되고 로테이션이 바뀐 것처럼 만들어도
+	deliver(t, db, sub, "be", "0002", "2026-09-19 22:00:00")
+	mustExec(t, db, `UPDATE contents SET rotation_count = 5 WHERE content_id = '0001'`)
+
+	if got := idOf(mustToday(t, newToday(db, time.Date(2026, 9, 20, 15, 0, 0, 0, kst)), "be")); got != "be/0001" {
+		t.Errorf("got %s, want be/0001 (저장된 오늘의 질문이 유지되어야 함)", got)
 	}
 }
 
-// 한국 시간 자정이 하루의 경계다. UTC 날짜로 나누면 07:00 발송이 전날로 잡힌다.
+// 다음 날에는 다음 새 글이고, 새 글이 없으면 가장 오래전에 나온 글을 복습으로 보여 줌.
+func TestContentOfDay_NextDaysThenReview(t *testing.T) {
+	db := newTestDB(t)
+	insertRepo(t, db, "be")
+	insertContent(t, db, "be", "0001")
+	insertContent(t, db, "be", "0002")
+
+	want := []struct {
+		id     string
+		review bool
+	}{
+		{"be/0001", false}, {"be/0002", false}, {"be/0001", true}, {"be/0002", true},
+	}
+	for i, w := range want {
+		q := mustToday(t, newToday(db, time.Date(2026, 9, 20+i, 9, 0, 0, 0, kst)), "be")
+		if idOf(q) != w.id || q.Review != w.review {
+			t.Errorf("9/%d: got %s review=%v, want %s review=%v", 20+i, idOf(q), q.Review, w.id, w.review)
+		}
+	}
+}
+
+// 한국 시간 자정이 하루의 경계다. UTC 날짜로 나누면 한국 아침이 전날로 잡힌다.
 func TestContentOfDay_KSTMidnightBoundary(t *testing.T) {
 	db := newTestDB(t)
-	sub := insertConfirmedSubscriber(t, db, "a@example.com")
 	insertRepo(t, db, "be")
 	insertContent(t, db, "be", "0001")
 	insertContent(t, db, "be", "0002")
-	mustExec(t, db, `UPDATE contents SET rotation_count = 1 WHERE content_id = '0001'`)
-	s := newToday(db, time.Date(2026, 9, 20, 12, 0, 0, 0, kst))
 
-	// 9/19 23:59:59 KST (= UTC 14:59:59): 어제로 취급
-	deliver(t, db, sub, "be", "0001", "2026-09-19 14:59:59")
-	if got := idOf(mustToday(t, s, "be")); got != "be/0002" {
-		t.Errorf("KST 자정 1초 전 발송은 어제 것: got %s, want be/0002", got)
+	lastSecond := time.Date(2026, 9, 20, 23, 59, 59, 0, kst) // UTC로는 9/20 14:59:59
+	midnight := time.Date(2026, 9, 21, 0, 0, 0, 0, kst)      // UTC로는 9/20 15:00:00
+	if got := idOf(mustToday(t, newToday(db, lastSecond), "be")); got != "be/0001" {
+		t.Errorf("KST 자정 1초 전: got %s, want be/0001", got)
 	}
-	// 9/20 00:00:00 KST (= UTC 15:00:00): 오늘로 취급
-	mustExec(t, db, `DELETE FROM delivery_log`)
-	deliver(t, db, sub, "be", "0001", "2026-09-19 15:00:00")
-	if got := idOf(mustToday(t, s, "be")); got != "be/0001" {
-		t.Errorf("KST 자정 정각 발송은 오늘 것: got %s, want be/0001", got)
+	if got := idOf(mustToday(t, newToday(db, midnight), "be")); got != "be/0002" {
+		t.Errorf("KST 자정 정각은 새 하루: got %s, want be/0002", got)
+	}
+	if got := idOf(mustToday(t, newToday(db, lastSecond), "be")); got != "be/0001" {
+		t.Errorf("다시 물어도 그날 글은 그대로: got %s, want be/0001", got)
 	}
 }
 
-func TestContentOfDay_DeletedDeliveredContentFallsBack(t *testing.T) {
+// 오늘의 질문이던 글이 삭제되면 같은 날 다시 정함.
+func TestContentOfDay_RepicksWhenTodaysContentIsDeleted(t *testing.T) {
 	db := newTestDB(t)
-	sub := insertConfirmedSubscriber(t, db, "a@example.com")
 	insertRepo(t, db, "be")
 	insertContent(t, db, "be", "0001")
 	insertContent(t, db, "be", "0002")
-	deliver(t, db, sub, "be", "0002", "2026-09-19 22:00:00")
-	mustExec(t, db, `UPDATE contents SET deleted_at = CURRENT_TIMESTAMP WHERE content_id = '0002'`)
-
 	s := newToday(db, time.Date(2026, 9, 20, 12, 0, 0, 0, kst))
+
 	if got := idOf(mustToday(t, s, "be")); got != "be/0001" {
-		t.Errorf("got %s, want be/0001 (오늘 나간 글이 삭제됐으면 로테이션의 다음 글)", got)
+		t.Fatalf("setup: got %s, want be/0001", got)
+	}
+	mustExec(t, db, `UPDATE contents SET deleted_at = CURRENT_TIMESTAMP WHERE content_id = '0001'`)
+
+	if got := idOf(mustToday(t, s, "be")); got != "be/0002" {
+		t.Errorf("got %s, want be/0002 (삭제된 글을 다시 정함)", got)
 	}
 }
 
@@ -234,19 +239,19 @@ func TestForGuest_UsesServiceTimeZoneForTheDay(t *testing.T) {
 	}
 }
 
-// 방문자 추첨이 고른 repo의 글은 그 repo의 오늘 글과 같아야 한다(발송 후에도).
-func TestForGuest_AfterSendShowsDeliveredContent(t *testing.T) {
+// 게스트도 복습 여부를 함께 받음: 새 글이 있으면 false, 모두 나왔으면 true.
+func TestForGuest_ReturnsTheReviewFlag(t *testing.T) {
 	db := newTestDB(t)
-	sub := insertConfirmedSubscriber(t, db, "a@example.com")
 	insertRepo(t, db, "be")
 	insertContent(t, db, "be", "0001")
 	insertContent(t, db, "be", "0002")
-	deliver(t, db, sub, "be", "0001", "2026-09-19 22:00:00")
-	mustExec(t, db, `UPDATE contents SET rotation_count = 1 WHERE content_id = '0001'`)
 
-	got, _ := newToday(db, time.Date(2026, 9, 20, 18, 0, 0, 0, kst)).ForGuest(context.Background())
-	if idOf(got) != "be/0001" {
-		t.Errorf("got %s, want be/0001", idOf(got))
+	want := []bool{false, false, true}
+	for i, w := range want {
+		got, err := newToday(db, time.Date(2026, 9, 20+i, 9, 0, 0, 0, kst)).ForGuest(context.Background())
+		if err != nil || got == nil || got.Review != w {
+			t.Errorf("9/%d: got %v err=%v, want review=%v", 20+i, got, err, w)
+		}
 	}
 }
 
@@ -286,9 +291,9 @@ func TestPicker_ChosenContentIsTheRepoContentOfDay(t *testing.T) {
 
 	for i := 0; i < 60; i++ {
 		p := pickerAt(db, time.Date(2026, 6, 1, 12, 0, 0, 0, kst).AddDate(0, 0, i))
-		for name, pick := range map[string]func() (*store.Content, error){
-			"guest":      func() (*store.Content, error) { return p.ForGuest(context.Background()) },
-			"subscriber": func() (*store.Content, error) { return p.ForSubscriber(context.Background(), sub) },
+		for name, pick := range map[string]func() (*Question, error){
+			"guest":      func() (*Question, error) { return p.ForGuest(context.Background()) },
+			"subscriber": func() (*Question, error) { return p.ForSubscriber(context.Background(), sub) },
 		} {
 			got, err := pick()
 			if err != nil || got == nil {
@@ -322,7 +327,7 @@ func TestDailySend_SendsWhatThePickerReturnsForThatSubscriber(t *testing.T) {
 		if _, err := DailySend(context.Background(), discardLogger(), &mockMailer{}, DailySendOptions{
 			Day: sendAt, Loc: testLoc,
 			SubRepo: store.NewSubscriberStore(db), RepoStore: store.NewRepoStore(db),
-			ContentStore: store.NewContentStore(db), LogStore: store.NewDeliveryLogStore(db),
+			ContentStore: store.NewContentStore(db), QuestionStore: store.NewDailyQuestionStore(db), LogStore: store.NewDeliveryLogStore(db),
 		}); err != nil {
 			t.Fatal(err)
 		}
@@ -351,7 +356,7 @@ func TestDailySend_LateSubscriberGetsTheSameContentAsEveryoneToday(t *testing.T)
 		if _, err := DailySend(context.Background(), discardLogger(), &mockMailer{}, DailySendOptions{
 			Day: at, Loc: testLoc,
 			SubRepo: store.NewSubscriberStore(db), RepoStore: store.NewRepoStore(db),
-			ContentStore: store.NewContentStore(db), LogStore: store.NewDeliveryLogStore(db),
+			ContentStore: store.NewContentStore(db), QuestionStore: store.NewDailyQuestionStore(db), LogStore: store.NewDeliveryLogStore(db),
 		}); err != nil {
 			t.Fatal(err)
 		}
@@ -659,5 +664,65 @@ func TestDailyPickSeed_DependsOnServiceDateOnly(t *testing.T) {
 	}
 	if a, b := dailyPickSeed(1, instant, kst), dailyPickSeed(2, instant, kst); a == b {
 		t.Errorf("구독자가 다른데 시드가 같음: %d", a)
+	}
+}
+
+func TestDailySend_RequiresQuestionStore(t *testing.T) {
+	db := newTestDB(t)
+	_, err := DailySend(context.Background(), discardLogger(), &mockMailer{}, DailySendOptions{
+		Day: time.Date(2026, 5, 27, 0, 0, 0, 0, time.UTC), Loc: kst,
+		SubRepo: store.NewSubscriberStore(db), RepoStore: store.NewRepoStore(db),
+		ContentStore: store.NewContentStore(db), LogStore: store.NewDeliveryLogStore(db),
+	})
+	if err == nil {
+		t.Fatal("err = nil, want an error when QuestionStore is missing")
+	}
+}
+
+// 구독자도 복습 여부를 함께 받음(메일과 API가 같은 Picker를 쓰므로 같은 값).
+
+// 구독자도 복습 여부를 함께 받음(메일과 API가 같은 Picker를 쓰므로 같은 값).
+func TestForSubscriber_ReturnsTheReviewFlag(t *testing.T) {
+	db := newTestDB(t)
+	sub := insertConfirmedSubscriber(t, db, "a@example.com")
+	insertRepo(t, db, "be")
+	insertContent(t, db, "be", "0001")
+	subscribe(t, db, sub, "be", 3)
+
+	for i, want := range []bool{false, true, true} { // 글이 하나라 첫날 이후는 모두 복습
+		got, err := pickerAt(db, time.Date(2026, 9, 20+i, 9, 0, 0, 0, kst)).ForSubscriber(context.Background(), sub)
+		if err != nil || got == nil || got.Review != want {
+			t.Errorf("day %d: got %v err=%v, want review=%v", i, got, err, want)
+		}
+	}
+}
+
+// 메일 배치가 만든 오늘의 질문 행은 API가 읽는 행과 같음(발송이 질문을 정함).
+
+// 메일 배치가 만든 오늘의 질문 행은 API가 읽는 행과 같음(발송이 질문을 정함).
+func TestDailySend_StoresTheDayQuestionThatTheAPIReads(t *testing.T) {
+	db := newTestDB(t)
+	sub := insertConfirmedSubscriber(t, db, "a@example.com")
+	insertRepo(t, db, "be")
+	insertContent(t, db, "be", "0001")
+	insertContent(t, db, "be", "0002")
+	subscribe(t, db, sub, "be", 3)
+	sendAt := time.Date(2026, 9, 20, 7, 0, 0, 0, kst)
+
+	if _, err := DailySend(context.Background(), discardLogger(), &mockMailer{}, DailySendOptions{
+		Day: sendAt, Loc: kst,
+		SubRepo: store.NewSubscriberStore(db), RepoStore: store.NewRepoStore(db),
+		ContentStore: store.NewContentStore(db), LogStore: store.NewDeliveryLogStore(db),
+		QuestionStore: store.NewDailyQuestionStore(db),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var content string
+	if err := db.QueryRow(`SELECT content_id FROM daily_question WHERE day = '2026-09-20' AND repo_slug = 'be'`).Scan(&content); err != nil {
+		t.Fatalf("no stored question for the sent day: %v", err)
+	}
+	got, _ := newToday(db, time.Date(2026, 9, 20, 15, 0, 0, 0, kst)).ForGuest(context.Background())
+	if content != "0001" || idOf(got) != "be/0001" {
+		t.Errorf("stored=%s api=%s, want both 0001", content, idOf(got))
 	}
 }

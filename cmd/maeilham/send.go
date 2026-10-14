@@ -10,7 +10,7 @@ import (
 )
 
 type SendDailyCmd struct {
-	DryRun  bool   `help:"결정만 로그하고 실제 발송/DB 변경은 하지 않음"`
+	DryRun  bool   `help:"결정만 로그하고 메일 발송과 발송 기록은 하지 않음 (오늘의 질문은 정해져 저장될 수 있음)"`
 	Date    string `help:"기준 날짜 YYYY-MM-DD, MAEILHAM_TZ 시간대의 그날 (미지정 시 오늘)"`
 	BaseURL string `help:"사이트 base URL (미지정 시 환경변수)"`
 }
@@ -30,17 +30,18 @@ func (c *SendDailyCmd) Run(ctx context.Context, d *deps) error {
 	}
 
 	stats, err := delivery.DailySend(ctx, d.log, d.mailer(), delivery.DailySendOptions{
-		Day:          day,
-		Loc:          loc,
-		DryRun:       c.DryRun,
-		BaseURL:      baseURL,
-		APIURL:       d.cfg.APIURL,
-		Secret:       d.cfg.Secret,
-		GitHubApp:    d.ghApp(),
-		SubRepo:      d.subRepo,
-		RepoStore:    d.repoStore,
-		ContentStore: d.contentStore,
-		LogStore:     d.logStore,
+		Day:           day,
+		Loc:           loc,
+		DryRun:        c.DryRun,
+		BaseURL:       baseURL,
+		APIURL:        d.cfg.APIURL,
+		Secret:        d.cfg.Secret,
+		GitHubApp:     d.ghApp(),
+		SubRepo:       d.subRepo,
+		RepoStore:     d.repoStore,
+		ContentStore:  d.contentStore,
+		LogStore:      d.logStore,
+		QuestionStore: d.questionStore,
 	})
 	if err != nil {
 		return err
@@ -52,8 +53,7 @@ func (c *SendDailyCmd) Run(ctx context.Context, d *deps) error {
 		"sent", stats.Sent,
 		"skipped_already_sent", stats.Skipped,
 		"no_content", stats.NoContent,
-		"errors", stats.Errors,
-		"contents_advanced", stats.Advanced)
+		"errors", stats.Errors)
 	return nil
 }
 

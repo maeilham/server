@@ -68,12 +68,12 @@ func subscribe(t *testing.T, db *sql.DB, subID int64, repoSlug string, weight in
 // pickerAt은 실제 저장소와 고정된 기준 시각으로 Picker를 만든다(서비스 시간대는 KST).
 func pickerAt(db *sql.DB, now time.Time) *Picker {
 	return &Picker{
-		Repos:    store.NewRepoStore(db),
-		Subs:     store.NewSubscriberStore(db),
-		Contents: store.NewContentStore(db),
-		Log:      store.NewDeliveryLogStore(db),
-		Loc:      kst,
-		Now:      func() time.Time { return now },
+		Repos:     store.NewRepoStore(db),
+		Subs:      store.NewSubscriberStore(db),
+		Contents:  store.NewContentStore(db),
+		Questions: store.NewDailyQuestionStore(db),
+		Loc:       kst,
+		Now:       func() time.Time { return now },
 	}
 }
 

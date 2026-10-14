@@ -53,10 +53,6 @@ type ContentRepository interface {
 	Today(ctx context.Context) (*Content, error)
 	// ListRecent returns the most recently synced contents across all active repos.
 	ListRecent(ctx context.Context, limit int) ([]*Content, error)
-	// AdvanceRotation bumps rotation_count for every (repo, content) delivered during [from, to) (서비스의 하루)
-	// that has not been advanced within that same interval yet, and records sentAt in contents.sent_at.
-	// 같은 하루에 다시 실행해도 이미 넘긴 글은 다시 넘기지 않는다.
-	AdvanceRotation(ctx context.Context, from, to, sentAt time.Time) (int64, error)
 	// SaveDiscussionURL persists the Discussion URL and node ID after creation.
 	SaveDiscussionURL(ctx context.Context, repoSlug, contentID, url, nodeID string) error
 }
@@ -291,30 +287,6 @@ func (s *sqlContentStore) ListRecent(ctx context.Context, limit int) ([]*Content
 		out = append(out, &c)
 	}
 	return out, rows.Err()
-}
-
-func (s *sqlContentStore) AdvanceRotation(ctx context.Context, from, to, sentAt time.Time) (int64, error) {
-	f, t := from.UTC().Format(timeLayout), to.UTC().Format(timeLayout)
-	res, err := s.db.ExecContext(ctx, `
-		UPDATE contents
-		   SET sent_at        = ?,
-		       rotation_count = rotation_count + 1
-		 WHERE (repo_slug, content_id) IN (
-		     SELECT DISTINCT repo_slug, content_id
-		       FROM delivery_log
-		      WHERE sent_at >= ? AND sent_at < ?
-		 )
-		   AND (sent_at IS NULL OR sent_at < ? OR sent_at >= ?)`,
-		sentAt.UTC().Format(timeLayout), f, t, f, t,
-	)
-	if err != nil {
-		return 0, fmt.Errorf("advance rotation: %w", err)
-	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return 0, fmt.Errorf("rows affected: %w", err)
-	}
-	return n, nil
 }
 
 func (s *sqlContentStore) SaveDiscussionURL(ctx context.Context, repoSlug, contentID, url, nodeID string) error {

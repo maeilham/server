@@ -5,13 +5,13 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/maeilham/server/internal/store"
+	"github.com/maeilham/server/internal/delivery"
 )
 
 // TodayPicker는 "오늘의 질문"을 정하는 쪽이다. delivery.Picker가 구현한다(메일 발송과 같은 Picker다).
 type TodayPicker interface {
 	// ForGuest returns 게스트의 오늘의 질문 하나. 보여줄 글이 하나도 없으면 (nil, nil).
-	ForGuest(ctx context.Context) (*store.Content, error)
+	ForGuest(ctx context.Context) (*delivery.Question, error)
 }
 
 type todayHandler struct {
@@ -27,6 +27,7 @@ type todayItem struct {
 	Title    string   `json:"title"`
 	Preview  string   `json:"preview"`
 	Tags     []string `json:"tags"`
+	Review   bool     `json:"review"` // 이미 나온 글을 다시 보여 주는 복습이면 true
 }
 
 type todayResponse struct {
@@ -48,6 +49,6 @@ func (h *todayHandler) handleGet(w http.ResponseWriter, r *http.Request) {
 	}
 	jsonOK(w, todayResponse{Item: todayItem{
 		Repo: c.RepoSlug, RepoName: c.RepoName, ID: c.ContentID,
-		Title: c.Title, Preview: c.Preview, Tags: decodeTags(c.Tags),
+		Title: c.Title, Preview: c.Preview, Tags: decodeTags(c.Tags), Review: c.Review,
 	}})
 }

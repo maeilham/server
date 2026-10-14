@@ -25,12 +25,13 @@ func TestDailySend_RerunAcrossUTCMidnightSameServiceDay(t *testing.T) {
 	mockM := &mockMailer{}
 	mk := func(day time.Time) DailySendOptions {
 		return DailySendOptions{
-			Day:          day,
-			Loc:          testLoc,
-			SubRepo:      store.NewSubscriberStore(db),
-			RepoStore:    store.NewRepoStore(db),
-			ContentStore: store.NewContentStore(db),
-			LogStore:     store.NewDeliveryLogStore(db),
+			Day:           day,
+			Loc:           testLoc,
+			SubRepo:       store.NewSubscriberStore(db),
+			RepoStore:     store.NewRepoStore(db),
+			ContentStore:  store.NewContentStore(db),
+			QuestionStore: store.NewDailyQuestionStore(db),
+			LogStore:      store.NewDeliveryLogStore(db),
 		}
 	}
 	morning := time.Date(2026, 5, 26, 22, 0, 0, 0, time.UTC) // 2026-05-27 07:00 KST
@@ -102,11 +103,12 @@ func TestServiceDay_DaylightSavingLength(t *testing.T) {
 func TestDailySend_RequiresLoc(t *testing.T) {
 	db := newTestDB(t)
 	_, err := DailySend(context.Background(), discardLogger(), &mockMailer{}, DailySendOptions{
-		Day:          time.Date(2026, 5, 27, 0, 0, 0, 0, time.UTC),
-		SubRepo:      store.NewSubscriberStore(db),
-		RepoStore:    store.NewRepoStore(db),
-		ContentStore: store.NewContentStore(db),
-		LogStore:     store.NewDeliveryLogStore(db),
+		Day:           time.Date(2026, 5, 27, 0, 0, 0, 0, time.UTC),
+		SubRepo:       store.NewSubscriberStore(db),
+		RepoStore:     store.NewRepoStore(db),
+		ContentStore:  store.NewContentStore(db),
+		QuestionStore: store.NewDailyQuestionStore(db),
+		LogStore:      store.NewDeliveryLogStore(db),
 	})
 	if err == nil {
 		t.Fatal("err = nil, want an error when Loc is missing")
@@ -127,7 +129,7 @@ func TestDailySend_NewServiceDayStartsAtServiceMidnight(t *testing.T) {
 		return DailySendOptions{
 			Day: day, Loc: testLoc,
 			SubRepo: store.NewSubscriberStore(db), RepoStore: store.NewRepoStore(db),
-			ContentStore: store.NewContentStore(db), LogStore: store.NewDeliveryLogStore(db),
+			ContentStore: store.NewContentStore(db), QuestionStore: store.NewDailyQuestionStore(db), LogStore: store.NewDeliveryLogStore(db),
 		}
 	}
 	lastSecond := time.Date(2026, 5, 27, 14, 59, 59, 0, time.UTC) // 23:59:59 KST, 5/27
@@ -169,7 +171,7 @@ func TestDailySend_PickSeedUsesServiceDate(t *testing.T) {
 		opts := DailySendOptions{
 			Day: day, Loc: testLoc,
 			SubRepo: store.NewSubscriberStore(db), RepoStore: store.NewRepoStore(db),
-			ContentStore: store.NewContentStore(db), LogStore: store.NewDeliveryLogStore(db),
+			ContentStore: store.NewContentStore(db), QuestionStore: store.NewDailyQuestionStore(db), LogStore: store.NewDeliveryLogStore(db),
 		}
 		if _, err := DailySend(context.Background(), discardLogger(), mockM, opts); err != nil {
 			t.Fatal(err)
@@ -182,5 +184,18 @@ func TestDailySend_PickSeedUsesServiceDate(t *testing.T) {
 		if got != want {
 			t.Fatalf("day %s: picked repo %q, want %q (seed must use the service-zone date)", kst.Format("2006-01-02"), got, want)
 		}
+	}
+}
+
+func TestServiceDate(t *testing.T) {
+	instant := time.Date(2026, 5, 27, 0, 30, 0, 0, kst) // 한국 5/27 00:30 = UTC 5/26 15:30
+	if got := ServiceDate(instant, kst); got != "2026-05-27" {
+		t.Errorf("KST = %s, want 2026-05-27", got)
+	}
+	if got := ServiceDate(instant.UTC(), kst); got != "2026-05-27" {
+		t.Errorf("같은 순간을 UTC 표기로 넘겨도 한국 날짜여야 함: got %s", got)
+	}
+	if got := ServiceDate(instant, time.UTC); got != "2026-05-26" {
+		t.Errorf("UTC 기준이면 전날: got %s", got)
 	}
 }

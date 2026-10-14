@@ -30,17 +30,18 @@ func (c *SendDailyCmd) Run(ctx context.Context, d *deps) error {
 	}
 
 	stats, err := delivery.DailySend(ctx, d.log, d.mailer(), delivery.DailySendOptions{
-		Day:          day,
-		Loc:          loc,
-		DryRun:       c.DryRun,
-		BaseURL:      baseURL,
-		APIURL:       d.cfg.APIURL,
-		Secret:       d.cfg.Secret,
-		GitHubApp:    d.ghApp(),
-		SubRepo:      d.subRepo,
-		RepoStore:    d.repoStore,
-		ContentStore: d.contentStore,
-		LogStore:     d.logStore,
+		Day:           day,
+		Loc:           loc,
+		DryRun:        c.DryRun,
+		BaseURL:       baseURL,
+		APIURL:        d.cfg.APIURL,
+		Secret:        d.cfg.Secret,
+		GitHubApp:     d.ghApp(),
+		SubRepo:       d.subRepo,
+		RepoStore:     d.repoStore,
+		ContentStore:  d.contentStore,
+		LogStore:      d.logStore,
+		QuestionStore: d.questionStore,
 	})
 	if err != nil {
 		return err

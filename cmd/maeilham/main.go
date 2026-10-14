@@ -48,12 +48,13 @@ func main() {
 	}
 
 	d := &deps{
-		cfg:          cfg,
-		log:          log,
-		repoStore:    store.NewRepoStore(conn),
-		contentStore: store.NewContentStore(conn),
-		logStore:     store.NewDeliveryLogStore(conn),
-		subRepo:      store.NewSubscriberStore(conn),
+		cfg:           cfg,
+		log:           log,
+		repoStore:     store.NewRepoStore(conn),
+		contentStore:  store.NewContentStore(conn),
+		logStore:      store.NewDeliveryLogStore(conn),
+		questionStore: store.NewDailyQuestionStore(conn),
+		subRepo:       store.NewSubscriberStore(conn),
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -69,12 +70,13 @@ func main() {
 }
 
 type deps struct {
-	cfg          *config.Config
-	log          *slog.Logger
-	repoStore    store.RepoRepository
-	contentStore store.ContentRepository
-	logStore     store.DeliveryLogRepository
-	subRepo      store.SubscriberRepository
+	cfg           *config.Config
+	log           *slog.Logger
+	repoStore     store.RepoRepository
+	contentStore  store.ContentRepository
+	logStore      store.DeliveryLogRepository
+	questionStore store.DailyQuestionRepository
+	subRepo       store.SubscriberRepository
 }
 
 // location은 서비스의 "하루"를 나누는 시간대(MAEILHAM_TZ)를 돌려준다. serve와 send-daily가 같은 값을 쓴다.

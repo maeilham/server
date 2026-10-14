@@ -51,7 +51,7 @@ func (c *ServeCmd) Run(ctx context.Context, d *deps) error {
 				content.NewGitHubClient(d.cfg.GitHubToken),
 				content.BodyOptions{Logger: d.log},
 			),
-			Today: &delivery.Picker{Repos: d.repoStore, Subs: d.subRepo, Contents: d.contentStore, Log: d.logStore, Loc: loc},
+			Today: &delivery.Picker{Repos: d.repoStore, Subs: d.subRepo, Contents: d.contentStore, Questions: d.questionStore, Loc: loc},
 		}),
 		ReadHeaderTimeout: 10 * time.Second,
 	}

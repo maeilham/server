@@ -62,10 +62,11 @@ type DailySendOptions struct {
 	Secret    string         // HMAC 서명 키 (unsubscribe 토큰 생성)
 	GitHubApp *gh.App
 
-	SubRepo      store.SubscriberRepository
-	RepoStore    store.RepoRepository
-	ContentStore store.ContentRepository
-	LogStore     store.DeliveryLogRepository
+	SubRepo       store.SubscriberRepository
+	RepoStore     store.RepoRepository
+	ContentStore  store.ContentRepository
+	LogStore      store.DeliveryLogRepository
+	QuestionStore store.DailyQuestionRepository
 }
 
 // DailySend runs one daily-send batch. Walks active subscribers, picks today's
@@ -83,16 +84,19 @@ func DailySend(
 	if opts.Loc == nil {
 		return stats, errors.New("DailySendOptions.Loc is required (service time zone, MAEILHAM_TZ)")
 	}
+	if opts.QuestionStore == nil {
+		return stats, errors.New("DailySendOptions.QuestionStore is required (daily question store)")
+	}
 	// "오늘"은 서비스 시간대의 하루 구간이다. 발송 여부와 로테이션 넘김을 모두 이 구간으로 판단한다.
 	dayStart, dayEnd := ServiceDay(opts.Day, opts.Loc)
 	// 오늘의 질문은 API와 같은 Picker로 정한다. 기준 시각만 발송 기준 시각(opts.Day)으로 고정한다.
 	picker := &Picker{
-		Repos:    opts.RepoStore,
-		Subs:     opts.SubRepo,
-		Contents: opts.ContentStore,
-		Log:      opts.LogStore,
-		Loc:      opts.Loc,
-		Now:      func() time.Time { return opts.Day },
+		Repos:     opts.RepoStore,
+		Subs:      opts.SubRepo,
+		Contents:  opts.ContentStore,
+		Questions: opts.QuestionStore,
+		Loc:       opts.Loc,
+		Now:       func() time.Time { return opts.Day },
 	}
 
 	subs, err := opts.SubRepo.ListActive(ctx)
@@ -136,7 +140,7 @@ func DailySend(
 		repo := repoMap[content.RepoSlug]
 
 		if opts.GitHubApp != nil && content.DiscussionURL == "" {
-			if discURL, err := createDiscussion(ctx, opts.GitHubApp, opts.ContentStore, content, repo); err != nil {
+			if discURL, err := createDiscussion(ctx, opts.GitHubApp, opts.ContentStore, content.Content, repo); err != nil {
 				logger.Warn("discussion create failed (non-fatal)", "content", content.ContentID, "err", err)
 			} else {
 				content.DiscussionURL = discURL

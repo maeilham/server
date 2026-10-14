@@ -12,3 +12,10 @@ func ServiceDay(t time.Time, loc *time.Location) (start, end time.Time) {
 	start = time.Date(l.Year(), l.Month(), l.Day(), 0, 0, 0, 0, loc)
 	return start, start.AddDate(0, 0, 1)
 }
+
+// ServiceDate는 t가 속한 서비스의 날짜를 loc(MAEILHAM_TZ) 기준 'YYYY-MM-DD' 문자열로 돌려줌.
+// daily_question의 day 키와 같은 형식이고, ServiceDay의 구간과 항상 같은 하루를 가리킴.
+func ServiceDate(t time.Time, loc *time.Location) string {
+	start, _ := ServiceDay(t, loc)
+	return start.Format("2006-01-02")
+}

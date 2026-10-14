@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"sort"
 	"testing"
 	"time"
@@ -19,11 +20,11 @@ import (
 )
 
 type fakePicker struct {
-	c   *store.Content
+	c   *delivery.Question
 	err error
 }
 
-func (f *fakePicker) ForGuest(context.Context) (*store.Content, error) { return f.c, f.err }
+func (f *fakePicker) ForGuest(context.Context) (*delivery.Question, error) { return f.c, f.err }
 
 func getToday(t *testing.T, p TodayPicker) *httptest.ResponseRecorder {
 	t.Helper()
@@ -36,11 +37,11 @@ func getToday(t *testing.T, p TodayPicker) *httptest.ResponseRecorder {
 }
 
 func TestToday_OKShape(t *testing.T) {
-	rec := getToday(t, &fakePicker{c: &store.Content{
+	rec := getToday(t, &fakePicker{c: &delivery.Question{Content: &store.Content{
 		RepoSlug: "be", RepoName: "백엔드", ContentID: "0001",
 		Title: "제목", Preview: "미리보기", Tags: `["go","cache"]`,
 		DiscussionURL: "https://x", BodyPath: "content/0001-x.md",
-	}})
+	}}})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body)
 	}
@@ -59,8 +60,11 @@ func TestToday_OKShape(t *testing.T) {
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
-	if want := []string{"id", "preview", "repo", "repoName", "tags", "title"}; len(keys) != len(want) || keys[0] != want[0] || keys[1] != want[1] || keys[2] != want[2] || keys[3] != want[3] || keys[4] != want[4] || keys[5] != want[5] {
+	if want := []string{"id", "preview", "repo", "repoName", "review", "tags", "title"}; !reflect.DeepEqual(keys, want) {
 		t.Errorf("keys = %v, want %v", keys, want)
+	}
+	if got.Item["review"] != false {
+		t.Errorf("review = %v, want false for a new question", got.Item["review"])
 	}
 	if got.Item["repo"] != "be" || got.Item["repoName"] != "백엔드" || got.Item["id"] != "0001" || got.Item["title"] != "제목" {
 		t.Errorf("item = %v", got.Item)
@@ -88,7 +92,7 @@ func TestToday_ErrorIs500(t *testing.T) {
 }
 
 func TestToday_BrokenTagsBecomeEmptyArray(t *testing.T) {
-	rec := getToday(t, &fakePicker{c: &store.Content{RepoSlug: "be", ContentID: "0001", Tags: "깨짐"}})
+	rec := getToday(t, &fakePicker{c: &delivery.Question{Content: &store.Content{RepoSlug: "be", ContentID: "0001", Tags: "깨짐"}}})
 	var got struct {
 		Item struct {
 			Tags []string `json:"tags"`
@@ -100,7 +104,7 @@ func TestToday_BrokenTagsBecomeEmptyArray(t *testing.T) {
 	}
 }
 
-// 실제 저장소 + 실제 라우터 + 실제 Picker: 경로 등록과 발송 전/후/다음 날 흐름을 끝까지 확인한다.
+// 실제 저장소 + 실제 라우터 + 실제 Picker: 경로 등록과 첫날, 같은 날, 다음 날, 복습 흐름을 끝까지 확인한다.
 func TestToday_ThroughRealRouter(t *testing.T) {
 	conn, err := dbpkg.Open(":memory:")
 	if err != nil {
@@ -126,43 +130,52 @@ func TestToday_ThroughRealRouter(t *testing.T) {
 	router := NewRouter(Deps{
 		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 		Today: &delivery.Picker{
-			Repos: store.NewRepoStore(conn), Contents: store.NewContentStore(conn), Log: store.NewDeliveryLogStore(conn),
+			Repos: store.NewRepoStore(conn), Contents: store.NewContentStore(conn), Questions: store.NewDailyQuestionStore(conn),
 			Loc: kst, Now: func() time.Time { return now },
 		},
 	})
-	titleNow := func() (int, string) {
+	titleNow := func() (int, string, bool) {
 		rec := httptest.NewRecorder()
 		router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/today", nil))
 		var m struct {
 			Item struct {
-				Title string `json:"title"`
+				Title  string `json:"title"`
+				Review bool   `json:"review"`
 			} `json:"item"`
 		}
 		_ = json.Unmarshal(rec.Body.Bytes(), &m)
-		return rec.Code, m.Item.Title
+		return rec.Code, m.Item.Title, m.Item.Review
 	}
 
-	if code, title := titleNow(); code != 200 || title != "첫 글" {
-		t.Errorf("발송 전: code=%d title=%q, want 200 첫 글", code, title)
+	// 첫날: 아직 안 나온 새 글이 먼저 나옴
+	if code, title, review := titleNow(); code != 200 || title != "첫 글" || review {
+		t.Errorf("첫날: code=%d title=%q review=%v, want 200 첫 글 review=false", code, title, review)
 	}
 
-	// 07:00 KST에 첫 글이 발송되고 배치가 로테이션을 넘긴 상태 (delivery_log는 UTC로 저장)
+	// 하루 종일 같은 질문이고, 메일 발송 기록이나 로테이션이 바뀌어도 영향이 없음(발송과 무관)
 	for _, q := range []string{
-		`INSERT INTO delivery_log(subscriber_id, repo_slug, content_id, sent_at) VALUES (1, 'be', '0001', '2026-09-19 22:00:00')`,
-		`UPDATE contents SET rotation_count = 1 WHERE content_id = '0001'`,
+		`INSERT INTO delivery_log(subscriber_id, repo_slug, content_id, sent_at) VALUES (1, 'be', '0002', '2026-09-19 22:00:00')`,
+		`UPDATE contents SET rotation_count = 5 WHERE content_id = '0001'`,
 	} {
 		if _, err := conn.Exec(q); err != nil {
 			t.Fatal(err)
 		}
 	}
-	now = time.Date(2026, 9, 20, 15, 0, 0, 0, kst)
-	if code, title := titleNow(); code != 200 || title != "첫 글" {
-		t.Errorf("발송 후: code=%d title=%q, want 200 첫 글 (내일 글이 보이면 안 됨)", code, title)
+	now = time.Date(2026, 9, 20, 23, 59, 0, 0, kst)
+	if code, title, review := titleNow(); code != 200 || title != "첫 글" || review {
+		t.Errorf("같은 날 밤: code=%d title=%q review=%v, want 200 첫 글 review=false", code, title, review)
 	}
 
-	now = time.Date(2026, 9, 21, 0, 10, 0, 0, kst) // 다음 날, 아직 발송 전
-	if code, title := titleNow(); code != 200 || title != "둘째 글" {
-		t.Errorf("다음 날: code=%d title=%q, want 200 둘째 글", code, title)
+	// 한국 자정이 지나면 다음 새 글
+	now = time.Date(2026, 9, 21, 0, 0, 0, 0, kst)
+	if code, title, review := titleNow(); code != 200 || title != "둘째 글" || review {
+		t.Errorf("다음 날: code=%d title=%q review=%v, want 200 둘째 글 review=false", code, title, review)
+	}
+
+	// 새 글이 더 없으면 가장 오래전에 나온 글을 복습으로 보여 줌
+	now = time.Date(2026, 9, 22, 9, 0, 0, 0, kst)
+	if code, title, review := titleNow(); code != 200 || title != "첫 글" || !review {
+		t.Errorf("셋째 날: code=%d title=%q review=%v, want 200 첫 글 review=true", code, title, review)
 	}
 }
 
@@ -178,7 +191,7 @@ func TestToday_NoContentIs404ThroughRealRouter(t *testing.T) {
 	router := NewRouter(Deps{
 		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 		Today: &delivery.Picker{
-			Repos: store.NewRepoStore(conn), Contents: store.NewContentStore(conn), Log: store.NewDeliveryLogStore(conn),
+			Repos: store.NewRepoStore(conn), Contents: store.NewContentStore(conn), Questions: store.NewDailyQuestionStore(conn),
 			Loc: time.UTC,
 		},
 	})
@@ -186,5 +199,27 @@ func TestToday_NoContentIs404ThroughRealRouter(t *testing.T) {
 	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/today", nil))
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("status = %d, want 404", rec.Code)
+	}
+}
+
+// 복습이면 응답의 review가 true다(웹이 "복습" 뱃지를 그리는 근거).
+func TestToday_ReviewFlagIsReturned(t *testing.T) {
+	rec := getToday(t, &fakePicker{c: &delivery.Question{
+		Content: &store.Content{RepoSlug: "be", RepoName: "백엔드", ContentID: "0001", Title: "제목", Tags: `[]`},
+		Review:  true,
+	}})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body)
+	}
+	var got struct {
+		Item struct {
+			Review bool `json:"review"`
+		} `json:"item"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if !got.Item.Review {
+		t.Errorf("review = false, want true: %s", rec.Body)
 	}
 }

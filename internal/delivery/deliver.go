@@ -49,7 +49,6 @@ type DailySendStats struct {
 	Skipped     int // 이미 오늘 받은 사용자 (멱등 스킵)
 	NoContent   int
 	Errors      int
-	Advanced    int64 // rotation_count 갱신된 콘텐츠 수
 	DryRun      bool
 }
 
@@ -70,9 +69,7 @@ type DailySendOptions struct {
 }
 
 // DailySend runs one daily-send batch. Walks active subscribers, picks today's
-// content for each, renders mail, sends, and records delivery_log. After all
-// sends are attempted, advances rotation_count for every content that received
-// at least one delivery.
+// content for each, renders mail, sends, and records delivery_log.
 func DailySend(
 	ctx context.Context,
 	logger *slog.Logger,
@@ -183,15 +180,6 @@ func DailySend(
 			continue
 		}
 		stats.Sent++
-	}
-
-	if !opts.DryRun {
-		advanced, err := opts.ContentStore.AdvanceRotation(ctx, dayStart, dayEnd, opts.Day)
-		if err != nil {
-			logger.Error("advance rotation", "err", err)
-			stats.Errors++
-		}
-		stats.Advanced = advanced
 	}
 
 	return stats, nil

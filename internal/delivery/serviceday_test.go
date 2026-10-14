@@ -51,10 +51,10 @@ func TestDailySend_RerunAcrossUTCMidnightSameServiceDay(t *testing.T) {
 	if len(mockM.messages) != 1 {
 		t.Errorf("sent %d mails, want 1", len(mockM.messages))
 	}
-	var rotation int
-	_ = db.QueryRow(`SELECT rotation_count FROM contents WHERE content_id = '0001'`).Scan(&rotation)
-	if rotation != 1 {
-		t.Errorf("0001 rotation_count = %d, want 1 (advanced once)", rotation)
+	var questions int
+	_ = db.QueryRow(`SELECT COUNT(*) FROM daily_question`).Scan(&questions)
+	if questions != 1 {
+		t.Errorf("daily_question rows = %d, want 1 (같은 서비스 하루는 질문이 하나)", questions)
 	}
 }
 
@@ -145,11 +145,10 @@ func TestDailySend_NewServiceDayStartsAtServiceMidnight(t *testing.T) {
 	if stats2.Sent != 1 || stats2.Skipped != 0 {
 		t.Errorf("after service midnight: Sent=%d Skipped=%d, want 1 and 0", stats2.Sent, stats2.Skipped)
 	}
-	var r1, r2 int
-	_ = db.QueryRow(`SELECT rotation_count FROM contents WHERE content_id = '0001'`).Scan(&r1)
-	_ = db.QueryRow(`SELECT rotation_count FROM contents WHERE content_id = '0002'`).Scan(&r2)
-	if r1 != 1 || r2 != 1 {
-		t.Errorf("rotation_count 0001=%d 0002=%d, want 1 and 1 (each day advanced its own content once)", r1, r2)
+	var sent string
+	_ = db.QueryRow(`SELECT group_concat(content_id) FROM (SELECT content_id FROM delivery_log ORDER BY id)`).Scan(&sent)
+	if sent != "0001,0002" {
+		t.Errorf("sent contents = %q, want 0001 then 0002 (각 서비스 하루가 자기 질문을 하나씩 보냄)", sent)
 	}
 }
 

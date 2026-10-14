@@ -65,9 +65,6 @@ func TestDailySend_HappyPath(t *testing.T) {
 	if stats.Subscribers != 1 || stats.Picked != 1 || stats.Sent != 1 || stats.Errors != 0 {
 		t.Errorf("unexpected stats: %+v", stats)
 	}
-	if stats.Advanced != 1 {
-		t.Errorf("expected 1 content advanced, got %d", stats.Advanced)
-	}
 	if len(mockM.messages) != 1 {
 		t.Fatalf("expected 1 mail sent, got %d", len(mockM.messages))
 	}
@@ -186,14 +183,10 @@ func TestDailySend_DryRunNoSideEffects(t *testing.T) {
 	if n != 0 {
 		t.Errorf("dry-run should not write delivery_log; got %d rows", n)
 	}
-	var rotation int
-	_ = db.QueryRow(`SELECT rotation_count FROM contents WHERE content_id = '0001'`).Scan(&rotation)
-	if rotation != 0 {
-		t.Errorf("dry-run should not advance rotation; got %d", rotation)
-	}
+	// 오늘의 질문(daily_question)은 정해져 저장될 수 있지만 메일 발송과 발송 기록은 없음
 }
 
-func TestDailySend_AdvanceProgressesContent(t *testing.T) {
+func TestDailySend_SendsDifferentContentOnEachDay(t *testing.T) {
 	db := newTestDB(t)
 	id := insertConfirmedSubscriber(t, db, "me@example.com")
 	insertRepo(t, db, "be")
@@ -217,33 +210,6 @@ func TestDailySend_AdvanceProgressesContent(t *testing.T) {
 	}
 	if mockM.messages[0].Subject == mockM.messages[1].Subject {
 		t.Errorf("expected different content across days, both = %q", mockM.messages[0].Subject)
-	}
-}
-
-func TestDailySend_AdvanceIsIdempotent(t *testing.T) {
-	db := newTestDB(t)
-	id := insertConfirmedSubscriber(t, db, "me@example.com")
-	insertRepo(t, db, "be")
-	insertContent(t, db, "be", "0001")
-	insertContent(t, db, "be", "0002")
-	subscribe(t, db, id, "be", 3)
-
-	ss := store.NewSubscriberStore(db)
-	cs := store.NewContentStore(db)
-	ls := store.NewDeliveryLogStore(db)
-	rs := store.NewRepoStore(db)
-	mockM := &mockMailer{}
-	day := time.Date(2026, 5, 27, 0, 0, 0, 0, time.UTC)
-	opts := DailySendOptions{Loc: testLoc, Day: day, SubRepo: ss, RepoStore: rs, ContentStore: cs, QuestionStore: store.NewDailyQuestionStore(db), LogStore: ls}
-
-	_, _ = DailySend(context.Background(), discardLogger(), mockM, opts)
-	_, _ = DailySend(context.Background(), discardLogger(), mockM, opts)
-	_, _ = DailySend(context.Background(), discardLogger(), mockM, opts)
-
-	var rotation int
-	_ = db.QueryRow(`SELECT rotation_count FROM contents WHERE content_id = '0001'`).Scan(&rotation)
-	if rotation != 1 {
-		t.Errorf("rotation_count must remain 1 after 3 same-day runs; got %d", rotation)
 	}
 }
 

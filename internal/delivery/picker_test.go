@@ -726,3 +726,37 @@ func TestDailySend_StoresTheDayQuestionThatTheAPIReads(t *testing.T) {
 		t.Errorf("stored=%s api=%s, want both 0001", content, idOf(got))
 	}
 }
+
+// prevOf는 PreviousDay를 비교하기 쉽게 문자열로 바꿈(없으면 빈 문자열).
+func prevOf(q *Question) string {
+	if q == nil || q.PreviousDay == nil {
+		return ""
+	}
+	return *q.PreviousDay
+}
+
+// 복습이면 이 글이 마지막으로 오늘의 질문이었던 날을 함께 돌려줌(게스트와 구독자 모두). 새 글이면 nil.
+func TestPicker_ReturnsThePreviousDayForAReview(t *testing.T) {
+	db := newTestDB(t)
+	sub := insertConfirmedSubscriber(t, db, "a@example.com")
+	insertRepo(t, db, "be")
+	insertContent(t, db, "be", "0001")
+	subscribe(t, db, sub, "be", 3)
+
+	// 글이 하나라 9/20만 새 글이고 이후는 모두 복습(마지막으로 나온 날은 바로 전날)
+	want := []string{"", "2026-09-20", "2026-09-21"}
+	for i, prev := range want {
+		at := time.Date(2026, 9, 20+i, 9, 0, 0, 0, kst)
+		g, err := pickerAt(db, at).ForGuest(context.Background())
+		if err != nil || g == nil || prevOf(g) != prev {
+			t.Errorf("guest 9/%d: got %+v err=%v, want previous=%q", 20+i, g, err, prev)
+		}
+		if g != nil && (g.PreviousDay == nil) != (prev == "") {
+			t.Errorf("guest 9/%d: PreviousDay nil-ness wrong (nil only for a new question): %+v", 20+i, g)
+		}
+		s, err := pickerAt(db, at).ForSubscriber(context.Background(), sub)
+		if err != nil || s == nil || prevOf(s) != prev {
+			t.Errorf("subscriber 9/%d: got %+v err=%v, want previous=%q", 20+i, s, err, prev)
+		}
+	}
+}

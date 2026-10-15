@@ -15,6 +15,14 @@ import (
 // day는 2026-10월의 i일을 서비스의 날짜 문자열로 만듦.
 func day(i int) string { return fmt.Sprintf("2026-10-%02d", i) }
 
+// prevOf는 PreviousDay를 비교하기 쉽게 문자열로 바꿈(없으면 빈 문자열).
+func prevOf(q *store.DailyQuestion) string {
+	if q == nil || q.PreviousDay == nil {
+		return ""
+	}
+	return *q.PreviousDay
+}
+
 func ensure(t *testing.T, dq store.DailyQuestionRepository, day, repo string) *store.DailyQuestion {
 	t.Helper()
 	q, err := dq.Ensure(context.Background(), day, repo)
@@ -267,5 +275,54 @@ func TestEnsure_HistoryIsPerRepo(t *testing.T) {
 	q := ensure(t, dq, day(2), "fe")
 	if q == nil || q.ContentID != "0001" || q.Review {
 		t.Errorf("fe: got %+v, want its own 0001 as a new question", q)
+	}
+}
+
+// PreviousDay는 그 글이 이 날 이전에 마지막으로 오늘의 질문이었던 날임. 새 글이면 비어 있음.
+func TestGet_PreviousDayIsTheMostRecentEarlierAppearance(t *testing.T) {
+	db := newTestDB(t)
+	insertRepo(t, db, "be", "백엔드", 1)
+	insertContent(t, db, "be", "0001", "a")
+	insertContent(t, db, "be", "0002", "b")
+	dq := store.NewDailyQuestionStore(db)
+
+	want := []struct{ id, previous string }{
+		{"0001", ""},     // 1일: 새 글
+		{"0002", ""},     // 2일: 새 글
+		{"0001", day(1)}, // 3일: 복습, 마지막으로 나온 날은 1일
+		{"0002", day(2)}, // 4일: 복습
+		{"0001", day(3)}, // 5일: 복습, 가장 최근 노출일은 1일이 아니라 3일
+	}
+	for i, w := range want {
+		q := ensure(t, dq, day(i+1), "be")
+		if q.ContentID != w.id || prevOf(q) != w.previous {
+			t.Errorf("day %d: got %s previous=%q, want %s previous=%q", i+1, q.ContentID, prevOf(q), w.id, w.previous)
+		}
+		if got, _ := dq.Get(context.Background(), day(i+1), "be"); got == nil || prevOf(got) != w.previous {
+			t.Errorf("day %d: Get previous = %+v, want %q", i+1, got, w.previous)
+		}
+	}
+}
+
+// 이전 노출일은 repo별로 구하고, 이 날 이후의 기록은 보지 않음.
+func TestGet_PreviousDayIsPerRepoAndOnlyLooksBackward(t *testing.T) {
+	db := newTestDB(t)
+	insertRepo(t, db, "be", "백엔드", 1)
+	insertRepo(t, db, "fe", "프론트엔드", 1)
+	insertContent(t, db, "be", "0001", "a")
+	insertContent(t, db, "fe", "0001", "x") // be와 같은 content_id
+	dq := store.NewDailyQuestionStore(db)
+
+	ensure(t, dq, day(1), "be")
+	if q := ensure(t, dq, day(2), "fe"); prevOf(q) != "" || q.Review {
+		t.Errorf("fe/0001: got %+v, want a new question (be의 0001은 다른 글)", q)
+	}
+
+	// 같은 글의 두 기록: 앞선 날은 이전이 없고, 뒤 날의 이전은 앞선 날
+	mustExec(t, db, `INSERT INTO daily_question(day, repo_slug, content_id, review) VALUES (?, 'be', '0001', 1)`, day(20))
+	early, _ := dq.Get(context.Background(), day(1), "be")
+	late, _ := dq.Get(context.Background(), day(20), "be")
+	if prevOf(early) != "" || prevOf(late) != day(1) {
+		t.Errorf("early=%q late=%q, want \"\" and %q", prevOf(early), prevOf(late), day(1))
 	}
 }

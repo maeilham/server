@@ -26,6 +26,8 @@ type fakePicker struct {
 
 func (f *fakePicker) ForGuest(context.Context) (*delivery.Question, error) { return f.c, f.err }
 
+func ptr(s string) *string { return &s }
+
 func getToday(t *testing.T, p TodayPicker) *httptest.ResponseRecorder {
 	t.Helper()
 	h := &todayHandler{picker: p, logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
@@ -176,6 +178,47 @@ func TestToday_ThroughRealRouter(t *testing.T) {
 	now = time.Date(2026, 9, 22, 9, 0, 0, 0, kst)
 	if code, title, review := titleNow(); code != 200 || title != "첫 글" || !review {
 		t.Errorf("셋째 날: code=%d title=%q review=%v, want 200 첫 글 review=true", code, title, review)
+	}
+	// 복습이면 그 글이 마지막으로 오늘의 질문이었던 날(9/20)도 응답에 담김. 새 글일 때는 이 필드가 없음.
+	rawItem := func() map[string]any {
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/today", nil))
+		var m struct {
+			Item map[string]any `json:"item"`
+		}
+		_ = json.Unmarshal(rec.Body.Bytes(), &m)
+		return m.Item
+	}
+	if got := rawItem()["previousDay"]; got != "2026-09-20" {
+		t.Errorf("복습의 previousDay = %v, want 2026-09-20", got)
+	}
+	now = time.Date(2026, 9, 24, 9, 0, 0, 0, kst) // 둘째 글도 복습(마지막은 9/21)
+	if got := rawItem()["previousDay"]; got != "2026-09-21" {
+		t.Errorf("다음 복습의 previousDay = %v, want 2026-09-21", got)
+	}
+}
+
+// 복습이면 previousDay가 응답에 담기고, 새 글이면 필드 자체가 없음.
+func TestToday_PreviousDayIsOnlyPresentForAReview(t *testing.T) {
+	item := func(q *delivery.Question) map[string]any {
+		rec := getToday(t, &fakePicker{c: q})
+		var m struct {
+			Item map[string]any `json:"item"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &m); err != nil {
+			t.Fatal(err)
+		}
+		return m.Item
+	}
+	c := &store.Content{RepoSlug: "be", RepoName: "백엔드", ContentID: "0001", Title: "제목", Tags: `[]`}
+
+	review := item(&delivery.Question{Content: c, Review: true, PreviousDay: ptr("2026-10-09")})
+	if review["previousDay"] != "2026-10-09" || review["review"] != true {
+		t.Errorf("review item = %v, want previousDay=2026-10-09 review=true", review)
+	}
+	fresh := item(&delivery.Question{Content: c})
+	if _, present := fresh["previousDay"]; present || fresh["review"] != false {
+		t.Errorf("new item = %v, want no previousDay and review=false", fresh)
 	}
 }
 

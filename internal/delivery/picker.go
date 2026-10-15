@@ -37,7 +37,8 @@ func (p *Picker) now() time.Time {
 // Question은 오늘의 질문 하나임. Review가 true이면 이미 나온 글을 다시 보여 주는 복습임.
 type Question struct {
 	*store.Content
-	Review bool
+	Review      bool
+	PreviousDay *string // 복습이면 이 글이 마지막으로 오늘의 질문이었던 날('YYYY-MM-DD'). 새 글이면 nil
 }
 
 type repoWeight struct {
@@ -124,7 +125,7 @@ func (p *Picker) contentOfDay(ctx context.Context, repoSlug string) (*Question, 
 	if err != nil || c == nil {
 		return nil, err
 	}
-	return &Question{Content: c, Review: q.Review}, nil
+	return &Question{Content: c, Review: q.Review, PreviousDay: q.PreviousDay}, nil
 }
 
 // pickByWeight는 seed에 따라 가중치에 비례해 인덱스 하나를 선택해요.

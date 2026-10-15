@@ -11,6 +11,9 @@ type DailyQuestion struct {
 	RepoSlug  string
 	ContentID string
 	Review    bool // 이미 나온 글을 다시 보여 주는 복습이면 true, 처음 나오는 새 글이면 false
+	// PreviousDay는 이 글이 이 날 이전에 마지막으로 오늘의 질문이 된 날('YYYY-MM-DD')임. 한 번도 안 나온 새 글이면 nil.
+	// 행에 저장하지 않고 조회할 때마다 이력에서 구함.
+	PreviousDay *string
 }
 
 // DailyQuestionRepository는 repo별 오늘의 질문을 저장하고 조회해요
@@ -31,10 +34,15 @@ func NewDailyQuestionStore(db *sql.DB) DailyQuestionRepository {
 func (s *sqlDailyQuestionStore) Get(ctx context.Context, day, repoSlug string) (*DailyQuestion, error) {
 	var q DailyQuestion
 	var review int
-	err := s.db.QueryRowContext(ctx,
-		`SELECT day, repo_slug, content_id, review FROM daily_question WHERE day = ? AND repo_slug = ?`,
+	var previous sql.NullString
+	err := s.db.QueryRowContext(ctx, `
+		SELECT q.day, q.repo_slug, q.content_id, q.review,
+		       (SELECT MAX(p.day) FROM daily_question p
+		         WHERE p.repo_slug = q.repo_slug AND p.content_id = q.content_id AND p.day < q.day)
+		  FROM daily_question q
+		 WHERE q.day = ? AND q.repo_slug = ?`,
 		day, repoSlug,
-	).Scan(&q.Day, &q.RepoSlug, &q.ContentID, &review)
+	).Scan(&q.Day, &q.RepoSlug, &q.ContentID, &review, &previous)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -42,6 +50,10 @@ func (s *sqlDailyQuestionStore) Get(ctx context.Context, day, repoSlug string) (
 		return nil, fmt.Errorf("get daily question %s/%s: %w", day, repoSlug, err)
 	}
 	q.Review = review == 1
+	if previous.Valid {
+		day := previous.String
+		q.PreviousDay = &day
+	}
 	return &q, nil
 }
 

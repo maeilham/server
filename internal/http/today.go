@@ -21,13 +21,14 @@ type todayHandler struct {
 
 // todayItem은 오늘의 질문 하나다. 본문은 무거우므로 넣지 않고, 필요하면 repo/id로 상세 API를 부른다.
 type todayItem struct {
-	Repo     string   `json:"repo"`
-	RepoName string   `json:"repoName"`
-	ID       string   `json:"id"`
-	Title    string   `json:"title"`
-	Preview  string   `json:"preview"`
-	Tags     []string `json:"tags"`
-	Review   bool     `json:"review"` // 이미 나온 글을 다시 보여 주는 복습이면 true
+	Repo        string   `json:"repo"`
+	RepoName    string   `json:"repoName"`
+	ID          string   `json:"id"`
+	Title       string   `json:"title"`
+	Preview     string   `json:"preview"`
+	Tags        []string `json:"tags"`
+	Review      bool     `json:"review"`                // 이미 나온 글을 다시 보여 주는 복습이면 true
+	PreviousDay *string  `json:"previousDay,omitempty"` // 복습이면 마지막으로 오늘의 질문이었던 날. 새 글이면 nil이라 필드가 없음
 }
 
 type todayResponse struct {
@@ -49,6 +50,6 @@ func (h *todayHandler) handleGet(w http.ResponseWriter, r *http.Request) {
 	}
 	jsonOK(w, todayResponse{Item: todayItem{
 		Repo: c.RepoSlug, RepoName: c.RepoName, ID: c.ContentID,
-		Title: c.Title, Preview: c.Preview, Tags: decodeTags(c.Tags), Review: c.Review,
+		Title: c.Title, Preview: c.Preview, Tags: decodeTags(c.Tags), Review: c.Review, PreviousDay: c.PreviousDay,
 	}})
 }

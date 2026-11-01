@@ -1,6 +1,6 @@
 # maeilham/server
 
-매일함 백엔드 서버. HTTP API, SSH 터미널, 콘텐츠 동기화, 메일 발송을 담당합니다.
+매일함 백엔드 서버. HTTP API, 콘텐츠 동기화, 메일 발송을 담당합니다.
 
 ## 구조
 
@@ -19,7 +19,6 @@ internal/
   mail/       메일 렌더링 및 발송 (Resend)
   store/      DB 접근 (구독자, repo, 콘텐츠, 발송 이력)
   subscriber/ 구독 신청/확인/해지 서비스
-  terminal/   SSH 터미널 핸들러 및 서비스
 ```
 
 ## 빠른 시작
@@ -32,12 +31,9 @@ cd server
 # 환경변수 설정
 cp .env.example .env  # 값 채우기
 
-# 서버 실행 (HTTP :8080, SSH :2222)
+# 서버 실행 (HTTP :8080)
 set -a && source .env && set +a
 go run ./cmd/maeilham serve
-
-# SSH 접속
-ssh -p 2222 localhost
 ```
 
 - `.env.example`은 `KEY=value` 형식이라 `source`만 하면 자식 프로세스(`go run`)에 전달되지 않습니다. 위처럼 `set -a`로 감싸거나, `.env`의 각 줄 앞에 `export`를 붙이세요.
@@ -74,7 +70,6 @@ curl -s localhost:8080/api/contents/backend-ops/0001 | jq
 | GET | `/api/today` | 오늘의 질문 하나 (오늘 발송해야 할 글, 방문자용. 본문 제외) |
 | GET | `/api/contents?limit=N` | 콘텐츠 목록 (본문 제외, 작성일 최신순, 기본 50 최대 100) |
 | GET | `/api/contents/{repo}/{id}` | 콘텐츠 상세 (메타데이터 + 마크다운 본문) |
-| GET | `/ws/terminal` | 웹 터미널용 WebSocket 브리지 |
 
 `content_id`는 repo 안에서만 유일하므로 콘텐츠는 항상 `{repo}/{id}` 쌍으로 가리킵니다.
 본문은 요청 시 GitHub에서 가져와 메모리에 캐시합니다(원본은 항상 GitHub repo).
@@ -85,7 +80,6 @@ curl -s localhost:8080/api/contents/backend-ops/0001 | jq
 | --------------------------------- | ---- | ---------------------------------------- |
 | `MAEILHAM_DB`                     | -    | SQLite 경로 (기본: `./data/maeilham.db`) |
 | `MAEILHAM_HTTP_ADDR`              | -    | HTTP 주소 (기본: `:8080`)                |
-| `MAEILHAM_SSH_ADDR`               | -    | SSH 주소 (기본: `:2222`)                 |
 | `MAEILHAM_TZ`                     | -    | 서비스의 "하루"를 나누는 시간대. 오늘의 질문과 발송 배치(중복 발송 방지, 로테이션 넘김, 추첨 시드)에 쓰임 (기본: `Asia/Seoul`) |
 | `MAEILHAM_BASE_URL`               | -    | 웹 프론트 URL                            |
 | `MAEILHAM_API_URL`                | -    | API 서버 URL                             |

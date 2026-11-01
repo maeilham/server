@@ -10,14 +10,12 @@ import (
 	"github.com/maeilham/server/internal/content"
 	"github.com/maeilham/server/internal/store"
 	"github.com/maeilham/server/internal/subscriber"
-	"github.com/maeilham/server/internal/terminal"
 )
 
 type Deps struct {
 	Logger  *slog.Logger
 	SubSvc  *subscriber.SubscriberService
 	BaseURL string
-	SSHAddr string // SSH 서버 주소 (WebSocket 브리지용)
 
 	Contents store.ContentRepository // 콘텐츠 메타데이터 조회
 	Bodies   content.BodySource      // 콘텐츠 본문(마크다운) 조회
@@ -60,12 +58,6 @@ func NewRouter(deps Deps) http.Handler {
 
 	r.Get("/api/contents", contents.handleList)
 	r.Get("/api/contents/{repo}/{id}", contents.handleGet)
-
-	sshAddr := deps.SSHAddr
-	if sshAddr == "" {
-		sshAddr = "localhost:2222"
-	}
-	r.Get("/ws/terminal", terminal.WSBridge(deps.Logger, sshAddr))
 
 	r.Mount("/debug", chimw.Profiler())
 

@@ -38,21 +38,12 @@ type ContentRepository interface {
 	SetAuthoredAt(ctx context.Context, repoSlug, contentID string, t time.Time) error
 	// MarkDeleted soft-deletes a single content row.
 	MarkDeleted(ctx context.Context, repoSlug, contentID string) error
-	// GetByID returns one content item by contentID (across all active repos).
-	// content_id는 repo 안에서만 유일하므로, 외부에 id를 노출하는 곳에서는 GetByRepoAndID를 쓴다.
-	GetByID(ctx context.Context, contentID string) (*Content, error)
 	// ListSummaries returns up to limit contents of active repos for a public listing,
 	// 작성일(없으면 synced_at) 최신순이고 같으면 content_id 내림차순이다.
 	ListSummaries(ctx context.Context, limit int) ([]*Content, error)
 	// GetByRepoAndID returns one content item identified by (repoSlug, contentID).
 	// Returns (nil, nil) if it does not exist, is deleted, or its repo is inactive.
 	GetByRepoAndID(ctx context.Context, repoSlug, contentID string) (*Content, error)
-	// TodayForRepo returns the next-in-rotation content for a given repo.
-	TodayForRepo(ctx context.Context, repoSlug string) (*Content, error)
-	// Today returns the next-in-rotation content for the first active repo (lexicographic).
-	Today(ctx context.Context) (*Content, error)
-	// ListRecent returns the most recently synced contents across all active repos.
-	ListRecent(ctx context.Context, limit int) ([]*Content, error)
 	// SaveDiscussionURL persists the Discussion URL and node ID after creation.
 	SaveDiscussionURL(ctx context.Context, repoSlug, contentID, url, nodeID string) error
 }
@@ -146,28 +137,6 @@ func (s *sqlContentStore) MarkDeleted(ctx context.Context, repoSlug, contentID s
 	return err
 }
 
-func (s *sqlContentStore) GetByID(ctx context.Context, contentID string) (*Content, error) {
-	var c Content
-	err := s.db.QueryRowContext(ctx, `
-		SELECT c.repo_slug, c.content_id, c.title, c.preview, c.body_path,
-		       r.github_url, COALESCE(c.discussion_url,''), COALESCE(c.discussion_node_id,''), c.rotation_count
-		  FROM contents c
-		  JOIN repos r ON r.slug = c.repo_slug
-		 WHERE c.content_id = ? AND c.deleted_at IS NULL AND r.active = 1
-		 LIMIT 1`, contentID,
-	).Scan(
-		&c.RepoSlug, &c.ContentID, &c.Title, &c.Preview, &c.BodyPath,
-		&c.GitHubURL, &c.DiscussionURL, &c.DiscussionNodeID, &c.RotationCount,
-	)
-	if err == sql.ErrNoRows {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, fmt.Errorf("get content %s: %w", contentID, err)
-	}
-	return &c, nil
-}
-
 func (s *sqlContentStore) ListSummaries(ctx context.Context, limit int) ([]*Content, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT c.repo_slug, c.content_id, c.title, c.preview, COALESCE(c.tags,'[]'), r.display_name,
@@ -225,68 +194,6 @@ func (s *sqlContentStore) GetByRepoAndID(ctx context.Context, repoSlug, contentI
 		return nil, fmt.Errorf("get content %s/%s: %w", repoSlug, contentID, err)
 	}
 	return &c, nil
-}
-
-func (s *sqlContentStore) TodayForRepo(ctx context.Context, repoSlug string) (*Content, error) {
-	var c Content
-	err := s.db.QueryRowContext(ctx, `
-		SELECT c.repo_slug, c.content_id, c.title, c.preview, c.body_path,
-		       r.github_url, COALESCE(c.discussion_url,''), COALESCE(c.discussion_node_id,''), c.rotation_count
-		  FROM contents c
-		  JOIN repos r ON r.slug = c.repo_slug
-		 WHERE c.repo_slug = ? AND c.deleted_at IS NULL
-		 ORDER BY c.rotation_count ASC, c.content_id ASC
-		 LIMIT 1`, repoSlug,
-	).Scan(
-		&c.RepoSlug, &c.ContentID, &c.Title, &c.Preview, &c.BodyPath,
-		&c.GitHubURL, &c.DiscussionURL, &c.DiscussionNodeID, &c.RotationCount,
-	)
-	if err == sql.ErrNoRows {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, fmt.Errorf("today content for %s: %w", repoSlug, err)
-	}
-	return &c, nil
-}
-
-func (s *sqlContentStore) Today(ctx context.Context) (*Content, error) {
-	var slug string
-	err := s.db.QueryRowContext(ctx,
-		`SELECT slug FROM repos WHERE active = 1 ORDER BY slug LIMIT 1`,
-	).Scan(&slug)
-	if err == sql.ErrNoRows {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, fmt.Errorf("query active repo: %w", err)
-	}
-	return s.TodayForRepo(ctx, slug)
-}
-
-func (s *sqlContentStore) ListRecent(ctx context.Context, limit int) ([]*Content, error) {
-	rows, err := s.db.QueryContext(ctx, `
-		SELECT c.repo_slug, c.content_id, c.title, c.preview, c.body_path,
-		       r.github_url, COALESCE(c.discussion_url,''), c.rotation_count
-		  FROM contents c
-		  JOIN repos r ON r.slug = c.repo_slug
-		 WHERE c.deleted_at IS NULL AND r.active = 1
-		 ORDER BY c.content_id DESC
-		 LIMIT ?`, limit)
-	if err != nil {
-		return nil, fmt.Errorf("list contents: %w", err)
-	}
-	defer rows.Close()
-	var out []*Content
-	for rows.Next() {
-		var c Content
-		if err := rows.Scan(&c.RepoSlug, &c.ContentID, &c.Title, &c.Preview, &c.BodyPath,
-			&c.GitHubURL, &c.DiscussionURL, &c.RotationCount); err != nil {
-			return nil, err
-		}
-		out = append(out, &c)
-	}
-	return out, rows.Err()
 }
 
 func (s *sqlContentStore) SaveDiscussionURL(ctx context.Context, repoSlug, contentID, url, nodeID string) error {

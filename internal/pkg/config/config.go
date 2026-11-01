@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"time"
 )
 
 type Config struct {
@@ -18,6 +19,9 @@ type Config struct {
 	TimeZone string
 
 	SSHAddr string
+
+	// SyncInterval이 0이면 serve가 콘텐츠를 sync하지 않는다(로컬 개발 기본).
+	SyncInterval time.Duration
 
 	GitHubToken string
 
@@ -47,6 +51,14 @@ func Load() (*Config, error) {
 		ResendAPIKey:         os.Getenv("MAEILHAM_RESEND_API_KEY"),
 		MailFromEmail:        getEnv("MAEILHAM_MAIL_FROM_EMAIL", "hello@maeilham.kr"),
 		MailFromName:         getEnv("MAEILHAM_MAIL_FROM_NAME", "매일함"),
+	}
+
+	if v := os.Getenv("MAEILHAM_SYNC_INTERVAL"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil || d < 0 {
+			return nil, fmt.Errorf("MAEILHAM_SYNC_INTERVAL %q: duration이어야 함(예: 1h, 비우면 끔)", v)
+		}
+		c.SyncInterval = d
 	}
 
 	if c.DatabaseURL == "" {

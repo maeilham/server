@@ -56,6 +56,14 @@ func (c *ServeCmd) Run(ctx context.Context, d *deps) error {
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
+	if d.cfg.SyncInterval > 0 {
+		go runEvery(ctx, d.cfg.SyncInterval, func(ctx context.Context) {
+			if err := syncRepos(ctx, d, ""); err != nil {
+				d.log.Error("scheduled sync", "err", err)
+			}
+		})
+	}
+
 	go func() {
 		d.log.Info("server starting", "addr", d.cfg.HTTPAddr)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, stdhttp.ErrServerClosed) {

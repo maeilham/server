@@ -18,8 +18,6 @@ type Config struct {
 	// TimeZone은 서비스의 "하루"를 나누는 시간대다(오늘의 질문). IANA 이름, 기본 Asia/Seoul.
 	TimeZone string
 
-	SSHAddr string
-
 	// SyncInterval이 0이면 serve가 콘텐츠를 sync하지 않는다(로컬 개발 기본).
 	SyncInterval time.Duration
 
@@ -43,7 +41,6 @@ func Load() (*Config, error) {
 		APIURL:               getEnv("MAEILHAM_API_URL", "http://localhost:8080"),
 		Secret:               getEnv("MAEILHAM_SECRET", "dev-secret-change-me"),
 		TimeZone:             getEnv("MAEILHAM_TZ", "Asia/Seoul"),
-		SSHAddr:              getEnv("MAEILHAM_SSH_ADDR", ":2222"),
 		GitHubToken:          os.Getenv("MAEILHAM_GITHUB_TOKEN"),
 		GitHubAppID:          parseInt64(os.Getenv("MAEILHAM_GITHUB_APP_ID")),
 		GitHubAppPemPath:     getEnv("MAEILHAM_GITHUB_APP_PEM", "./maeilham-bot.pem"),

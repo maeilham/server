@@ -16,32 +16,6 @@ import (
 	"github.com/maeilham/server/internal/store"
 )
 
-// EnsureDiscussion returns the Discussion URL for contentID, creating one if it doesn't exist yet.
-func EnsureDiscussion(
-	ctx context.Context,
-	app *gh.App,
-	contentStore store.ContentRepository,
-	repoStore store.RepoRepository,
-	contentID string,
-) (string, error) {
-	if app == nil {
-		return "", nil
-	}
-	c, err := contentStore.GetByID(ctx, contentID)
-	if err != nil || c == nil {
-		return "", err
-	}
-	if c.DiscussionURL != "" {
-		return c.DiscussionURL, nil
-	}
-	repos, err := repoStore.ListAll(ctx)
-	if err != nil {
-		return "", err
-	}
-	repoMap := buildRepoMap(repos)
-	return createDiscussion(ctx, app, contentStore, c, repoMap[c.RepoSlug])
-}
-
 type DailySendStats struct {
 	Subscribers int
 	Picked      int

@@ -399,59 +399,6 @@ func TestForGuest_IsTheVirtualSubscriberZero(t *testing.T) {
 	}
 }
 
-// ---------------- TodayContentForRepo ----------------
-
-func TestTodayForRepo_Empty(t *testing.T) {
-	db := newTestDB(t)
-	insertRepo(t, db, "be")
-	_, cs := newStores(db)
-
-	got, err := cs.TodayForRepo(context.Background(), "be")
-	if err != nil {
-		t.Fatalf("err: %v", err)
-	}
-	if got != nil {
-		t.Errorf("expected nil for empty repo, got %+v", got)
-	}
-}
-
-func TestTodayForRepo_OrdersByRotationThenContentID(t *testing.T) {
-	db := newTestDB(t)
-	insertRepo(t, db, "be")
-	insertContent(t, db, "be", "0001")
-	insertContent(t, db, "be", "0002")
-	insertContent(t, db, "be", "0003")
-
-	// 0001 already rotated, so 0002 should now be "today"
-	mustExec(t, db, `UPDATE contents SET rotation_count = 1 WHERE content_id = '0001'`)
-	_, cs := newStores(db)
-
-	got, err := cs.TodayForRepo(context.Background(), "be")
-	if err != nil {
-		t.Fatalf("err: %v", err)
-	}
-	if got == nil || got.ContentID != "0002" {
-		t.Errorf("expected 0002, got %+v", got)
-	}
-}
-
-func TestTodayForRepo_IgnoresDeleted(t *testing.T) {
-	db := newTestDB(t)
-	insertRepo(t, db, "be")
-	insertContent(t, db, "be", "0001")
-	insertContent(t, db, "be", "0002")
-	mustExec(t, db, `UPDATE contents SET deleted_at = CURRENT_TIMESTAMP WHERE content_id = '0001'`)
-	_, cs := newStores(db)
-
-	got, err := cs.TodayForRepo(context.Background(), "be")
-	if err != nil {
-		t.Fatalf("err: %v", err)
-	}
-	if got == nil || got.ContentID != "0002" {
-		t.Errorf("expected 0002 (0001 is deleted), got %+v", got)
-	}
-}
-
 // ---------------- ForSubscriber ----------------
 
 func TestForSubscriber_Unconfirmed(t *testing.T) {

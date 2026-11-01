@@ -20,7 +20,7 @@ import (
 )
 
 var CLI struct {
-	Serve     ServeCmd     `cmd:"" help:"HTTP + SSH 서버 기동"`
+	Serve     ServeCmd     `cmd:"" help:"HTTP 서버 기동"`
 	Sync      SyncCmd      `cmd:"" help:"콘텐츠 repo를 fetch + DB로 sync"`
 	SendDaily SendDailyCmd `cmd:"send-daily" help:"활성 구독자 전체에 오늘의 메일 발송"`
 	SendTest  SendTestCmd  `cmd:"send-test" help:"발송 어댑터 동작 확인용 메일 1통 전송"`

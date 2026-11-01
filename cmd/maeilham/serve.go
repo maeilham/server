@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"errors"
-	"fmt"
 	stdhttp "net/http"
 	"os"
 	"time"
@@ -12,7 +11,6 @@ import (
 	"github.com/maeilham/server/internal/delivery"
 	httpsrv "github.com/maeilham/server/internal/http"
 	"github.com/maeilham/server/internal/subscriber"
-	"github.com/maeilham/server/internal/terminal"
 )
 
 type ServeCmd struct{}
@@ -25,26 +23,12 @@ func (c *ServeCmd) Run(ctx context.Context, d *deps) error {
 
 	subSvc := subscriber.NewSubscriberService(d.subRepo, d.mailer(), d.cfg.Secret, d.cfg.APIURL, d.cfg.BaseURL)
 
-	termSvc := terminal.NewService(subSvc, d.repoStore, d.contentStore, d.ghApp())
-	termHandler := terminal.NewHandler(termSvc)
-
-	sshSrv, err := terminal.NewServer(d.log, termHandler)
-	if err != nil {
-		return fmt.Errorf("ssh server init: %w", err)
-	}
-	go func() {
-		if err := sshSrv.ListenAndServe(d.cfg.SSHAddr); err != nil {
-			d.log.Error("ssh server", "err", err)
-		}
-	}()
-
 	srv := &stdhttp.Server{
 		Addr: d.cfg.HTTPAddr,
 		Handler: httpsrv.NewRouter(httpsrv.Deps{
 			Logger:  d.log,
 			SubSvc:  subSvc,
 			BaseURL: d.cfg.BaseURL,
-			SSHAddr: d.cfg.SSHAddr,
 
 			Contents: d.contentStore,
 			Bodies: content.NewCachedBodySource(

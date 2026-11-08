@@ -123,7 +123,7 @@ func RenderNewQuestions(d NewQuestionMailData) (subject, text, html string) {
 			fmt.Fprintf(&b, "%s\n\n", q.Preview)
 		}
 	}
-	fmt.Fprintf(&b, "지금 풀어보기 → %s\n", d.WebURL)
+	fmt.Fprintf(&b, "지금 확인하기 → %s\n", d.WebURL)
 	if d.UnsubscribeURL != "" {
 		fmt.Fprintf(&b, "\n—\n구독 해지 → %s\n", d.UnsubscribeURL)
 	}

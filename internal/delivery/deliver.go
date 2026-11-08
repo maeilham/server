@@ -60,6 +60,7 @@ func NotifyNewQuestions(
 	dayStart, dayEnd := ServiceDay(opts.Day, opts.Loc)
 	day := ServiceDate(opts.Day, opts.Loc)
 
+	// 1. 오늘 알릴 새 질문 모으기. 복습이거나 이미 처리한 질문은 제외하고, 질문이 아직 없으면 여기서 정함
 	repos, err := opts.RepoStore.ListActive(ctx)
 	if err != nil {
 		return stats, fmt.Errorf("load repos: %w", err)
@@ -94,6 +95,7 @@ func NotifyNewQuestions(
 		return stats, nil
 	}
 
+	// 2. 새 질문의 Discussion 만들기. 실패해도 알림은 계속함
 	if !opts.DryRun && opts.GitHubApp != nil {
 		for _, n := range news {
 			if n.content.DiscussionURL != "" {
@@ -105,6 +107,7 @@ func NotifyNewQuestions(
 		}
 	}
 
+	// 3. 구독자마다 한 통. 이미 받았으면 제외하고, 구독한 repo의 새 질문만 묶음
 	subs, err := opts.SubRepo.ListActive(ctx)
 	if err != nil {
 		return stats, fmt.Errorf("load subscribers: %w", err)
@@ -160,6 +163,7 @@ func NotifyNewQuestions(
 			UnsubscribeURL: buildUnsubscribeURL(opts.BaseURL, opts.Secret, sub.Email),
 		})
 
+		// 4. 발송과 기록. dry-run이면 로그만 남김
 		if opts.DryRun {
 			l.Info("dry-run notify", "questions", len(items), "subject", subject)
 			stats.Sent++
@@ -180,6 +184,7 @@ func NotifyNewQuestions(
 		stats.Sent++
 	}
 
+	// 5. 실패 없이 끝났을 때만 완료 표시. 실패했으면 다음 실행이 남은 사람부터 이어 보냄
 	if opts.DryRun || stats.Errors > 0 {
 		return stats, nil
 	}

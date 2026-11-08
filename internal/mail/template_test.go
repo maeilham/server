@@ -70,3 +70,49 @@ func TestRenderRotatedLink_EscapesUnsafeURL(t *testing.T) {
 		t.Error("link URL was injected into the html unescaped")
 	}
 }
+
+func TestRenderNewQuestions(t *testing.T) {
+	d := NewQuestionMailData{
+		Questions:      []NewQuestion{{RepoName: "백엔드/운영", Title: "SYN flooding이란?", Preview: "서버가 어떻게 되나요?"}},
+		WebURL:         "https://web.example/",
+		UnsubscribeURL: "https://web.example/?action=unsubscribe&token=t",
+	}
+	subject, text, html := RenderNewQuestions(d)
+
+	if !strings.Contains(subject, "SYN flooding이란?") {
+		t.Errorf("subject has no title: %q", subject)
+	}
+	for name, body := range map[string]string{"text": text, "html": html} {
+		for _, want := range []string{"새로운 질문이 생겼어요", "SYN flooding이란?", "https://web.example/"} {
+			if !strings.Contains(body, want) {
+				t.Errorf("%s body missing %q", name, want)
+			}
+		}
+	}
+	if want := `href="https://web.example/"`; !strings.Contains(html, want) {
+		t.Errorf("html has no CTA link %s", want)
+	}
+}
+
+func TestRenderNewQuestions_SeveralQuestions(t *testing.T) {
+	subject, text, _ := RenderNewQuestions(NewQuestionMailData{
+		Questions: []NewQuestion{{RepoName: "a", Title: "첫째"}, {RepoName: "b", Title: "둘째"}},
+		WebURL:    "https://web.example/",
+	})
+	if !strings.Contains(subject, "2개") {
+		t.Errorf("subject = %q, want count", subject)
+	}
+	if !strings.Contains(text, "첫째") || !strings.Contains(text, "둘째") {
+		t.Errorf("text lacks a question:\n%s", text)
+	}
+}
+
+func TestRenderNewQuestions_EscapesUnsafeInput(t *testing.T) {
+	_, _, html := RenderNewQuestions(NewQuestionMailData{
+		Questions: []NewQuestion{{RepoName: "r", Title: "<script>alert(1)</script>", Preview: "<img src=x onerror=alert(1)>"}},
+		WebURL:    `https://web.example/"><script>alert(2)</script>`,
+	})
+	if strings.Contains(html, "<script>") || strings.Contains(html, "<img src=x") {
+		t.Error("input was injected into the html unescaped")
+	}
+}

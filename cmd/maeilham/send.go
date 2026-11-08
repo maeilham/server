@@ -9,13 +9,13 @@ import (
 	"github.com/maeilham/server/internal/mail"
 )
 
-type SendDailyCmd struct {
+type NotifyCmd struct {
 	DryRun  bool   `help:"결정만 로그하고 메일 발송과 발송 기록은 하지 않음 (오늘의 질문은 정해져 저장될 수 있음)"`
 	Date    string `help:"기준 날짜 YYYY-MM-DD, MAEILHAM_TZ 시간대의 그날 (미지정 시 오늘)"`
 	BaseURL string `help:"사이트 base URL (미지정 시 환경변수)"`
 }
 
-func (c *SendDailyCmd) Run(ctx context.Context, d *deps) error {
+func (c *NotifyCmd) Run(ctx context.Context, d *deps) error {
 	loc, err := d.location()
 	if err != nil {
 		return err
@@ -24,17 +24,19 @@ func (c *SendDailyCmd) Run(ctx context.Context, d *deps) error {
 	if err != nil {
 		return err
 	}
-	baseURL := c.BaseURL
+	return notifyNewQuestions(ctx, d, loc, day, c.DryRun, c.BaseURL)
+}
+
+// notifyNewQuestions는 day(서비스 시간대의 하루)에 처음 나오는 새 질문을 구독자에게 알린다. CLI와 스케줄러가 같이 쓴다.
+func notifyNewQuestions(ctx context.Context, d *deps, loc *time.Location, day time.Time, dryRun bool, baseURL string) error {
 	if baseURL == "" {
 		baseURL = d.cfg.BaseURL
 	}
-
-	stats, err := delivery.DailySend(ctx, d.log, d.mailer(), delivery.DailySendOptions{
+	stats, err := delivery.NotifyNewQuestions(ctx, d.log, d.mailer(), delivery.NotifyOptions{
 		Day:           day,
 		Loc:           loc,
-		DryRun:        c.DryRun,
+		DryRun:        dryRun,
 		BaseURL:       baseURL,
-		APIURL:        d.cfg.APIURL,
 		Secret:        d.cfg.Secret,
 		GitHubApp:     d.ghApp(),
 		SubRepo:       d.subRepo,
@@ -46,14 +48,15 @@ func (c *SendDailyCmd) Run(ctx context.Context, d *deps) error {
 	if err != nil {
 		return err
 	}
-	d.log.Info("send-daily done",
-		"dry_run", stats.DryRun,
-		"subscribers", stats.Subscribers,
-		"picked", stats.Picked,
-		"sent", stats.Sent,
-		"skipped_already_sent", stats.Skipped,
-		"no_content", stats.NoContent,
-		"errors", stats.Errors)
+	if stats.NewQuestions > 0 || stats.Errors > 0 {
+		d.log.Info("notify done",
+			"dry_run", stats.DryRun,
+			"new_questions", stats.NewQuestions,
+			"subscribers", stats.Subscribers,
+			"sent", stats.Sent,
+			"skipped", stats.Skipped,
+			"errors", stats.Errors)
+	}
 	return nil
 }
 
@@ -75,13 +78,14 @@ type SendTestCmd struct {
 }
 
 func (c *SendTestCmd) Run(ctx context.Context, d *deps) error {
-	subject, text, html := mail.RenderDaily(mail.DailyMailData{
-		RepoName:       "백엔드 면접",
-		Title:          "인덱스(Index)가 무엇이고, 어떻게 동작하나요?",
-		Preview:        "DB 인덱스는 데이터 검색 속도를 높이기 위해 별도로 관리하는 자료구조입니다.",
-		GitHubURL:      "https://github.com/maeilham/be-interview/blob/main/content/0001-index.md",
-		DiscussionURL:  "https://github.com/maeilham/be-interview/discussions/1",
-		UnsubscribeURL: "https://maeilham.kr/unsubscribe?sid=0",
+	subject, text, html := mail.RenderNewQuestions(mail.NewQuestionMailData{
+		Questions: []mail.NewQuestion{{
+			RepoName: "백엔드 면접",
+			Title:    "인덱스(Index)가 무엇이고, 어떻게 동작하나요?",
+			Preview:  "DB 인덱스는 데이터 검색 속도를 높이기 위해 별도로 관리하는 자료구조입니다.",
+		}},
+		WebURL:         "https://maeilham.github.io/",
+		UnsubscribeURL: "https://maeilham.github.io/?action=unsubscribe&token=test",
 	})
 	if err := d.mailer().Send(ctx, mail.Message{
 		To: c.To, Subject: subject, TextBody: text, HTMLBody: html,

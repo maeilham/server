@@ -19,3 +19,9 @@ func ServiceDate(t time.Time, loc *time.Location) string {
 	start, _ := ServiceDay(t, loc)
 	return start.Format("2006-01-02")
 }
+
+// NotifyDue는 now가 속한 서비스의 하루에서 at(자정부터의 발송 시각)이 지났는지 알려 준다.
+func NotifyDue(now time.Time, loc *time.Location, at time.Duration) bool {
+	start, _ := ServiceDay(now, loc)
+	return !now.Before(start.Add(at))
+}

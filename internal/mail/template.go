@@ -8,8 +8,8 @@ import (
 	"strings"
 )
 
-//go:embed daily.html
-var dailyHTMLTmpl string
+//go:embed new_question.html
+var newQuestionHTMLTmpl string
 
 //go:embed confirm.html
 var confirmHTMLTmpl string
@@ -20,23 +20,26 @@ var linkHTMLTmpl string
 //go:embed link_rotated.html
 var linkRotatedHTMLTmpl string
 
-var dailyTmpl   = template.Must(template.New("daily").Parse(dailyHTMLTmpl))
+var newQuestionTmpl = template.Must(template.New("new_question").Parse(newQuestionHTMLTmpl))
 var confirmTmpl = template.Must(template.New("confirm").Parse(confirmHTMLTmpl))
 var linkTmpl    = template.Must(template.New("link").Parse(linkHTMLTmpl))
 var linkRotatedTmpl = template.Must(template.New("link_rotated").Parse(linkRotatedHTMLTmpl))
 
-// DailyMailData carries everything a mail template needs.
+// NewQuestion은 알림 메일에 담기는 새 질문 하나다. 답은 담지 않는다.
+type NewQuestion struct {
+	RepoName string
+	Title    string
+	Preview  string
+}
+
+// NewQuestionMailData carries everything the new-question mail template needs.
 // The template package itself stays decoupled from delivery/content packages.
-type DailyMailData struct {
-	RepoSlug       string
-	RepoName       string
-	Title          string
-	Preview        string
-	GitHubURL      string // e.g. https://github.com/maeilham/be/blob/main/content/0001-...md
-	DiscussionURL  string // optional, falls back to repo discussions index
+type NewQuestionMailData struct {
+	Questions      []NewQuestion
+	WebURL         string // 웹의 오늘의 질문 주소. 개인 링크 토큰은 싣지 않는다
 	UnsubscribeURL string
 
-	// Subject is injected into the HTML template; set by RenderDaily.
+	// Subject is injected into the HTML template; set by RenderNewQuestions.
 	Subject string
 }
 
@@ -66,7 +69,7 @@ func RenderLink(linkURL string) (subject, text, html string) {
 
 - 즐겨찾기(북마크)에 넣어두면 편해요.
 - 이 링크는 나만의 열쇠예요. 다른 사람에게 공유하지 마세요.
-- 매일 아침 메일은 질문이 충분히 쌓이면 시작할게요.
+- 새 질문이 올라오는 날 아침에 메일로 알려드릴게요.
 
 이 메일을 요청하지 않으셨다면 무시해주세요.
 `, linkURL)
@@ -103,31 +106,34 @@ func RenderRotatedLink(linkURL string) (subject, text, html string) {
 	return
 }
 
-// RenderDaily produces (subject, text, html).
-func RenderDaily(d DailyMailData) (subject, text, html string) {
-	subject = fmt.Sprintf("[매일함] %s", d.Title)
+// RenderNewQuestions produces (subject, text, html) for the mail sent on the day new questions become today's question.
+func RenderNewQuestions(d NewQuestionMailData) (subject, text, html string) {
+	if len(d.Questions) == 1 {
+		subject = fmt.Sprintf("[매일함] 새로운 질문이 생겼어요: %s", d.Questions[0].Title)
+	} else {
+		subject = fmt.Sprintf("[매일함] 새로운 질문 %d개가 생겼어요", len(d.Questions))
+	}
 	d.Subject = subject
 
 	var b strings.Builder
-	fmt.Fprintf(&b, "오늘의 질문 (%s)\n\n", d.RepoName)
-	fmt.Fprintf(&b, "%s\n\n", d.Title)
-	if d.Preview != "" {
-		fmt.Fprintf(&b, "%s\n\n", d.Preview)
+	b.WriteString("새로운 질문이 생겼어요\n\n")
+	for _, q := range d.Questions {
+		fmt.Fprintf(&b, "%s\n%s\n\n", q.RepoName, q.Title)
+		if q.Preview != "" {
+			fmt.Fprintf(&b, "%s\n\n", q.Preview)
+		}
 	}
-	fmt.Fprintf(&b, "전체 보기 → %s\n", d.GitHubURL)
-	if d.DiscussionURL != "" {
-		fmt.Fprintf(&b, "토론에 참여 → %s\n", d.DiscussionURL)
-	}
+	fmt.Fprintf(&b, "지금 풀어보기 → %s\n", d.WebURL)
 	if d.UnsubscribeURL != "" {
 		fmt.Fprintf(&b, "\n—\n구독 해지 → %s\n", d.UnsubscribeURL)
 	}
 	text = b.String()
 
 	var buf bytes.Buffer
-	if err := dailyTmpl.Execute(&buf, d); err != nil {
+	if err := newQuestionTmpl.Execute(&buf, d); err != nil {
 		// template parse errors are caught at init; Execute only fails on
 		// broken Writer, which bytes.Buffer never does.
-		panic("mail: daily template execute: " + err.Error())
+		panic("mail: new_question template execute: " + err.Error())
 	}
 	html = buf.String()
 	return

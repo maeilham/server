@@ -120,3 +120,50 @@ func TestMigration006_DropsOnlyTheDeliveryLogRepoSentIndex(t *testing.T) {
 	// 두 번 적용해도 실패하지 않음(IF EXISTS)
 	apply("006_drop_delivery_log_repo_sent_index.sql")
 }
+
+func TestMigration007_MarksExistingQuestionsAsNotified(t *testing.T) {
+	conn, err := Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn.SetMaxOpenConns(1)
+	t.Cleanup(func() { _ = conn.Close() })
+
+	apply := func(name string) {
+		t.Helper()
+		b, err := migrationsFS.ReadFile(name)
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		if _, err := conn.Exec(string(b)); err != nil {
+			t.Fatalf("apply %s: %v", name, err)
+		}
+	}
+	for _, n := range []string{"001_init.sql", "002_authored_at.sql", "003_delivery_log_repo_sent.sql", "004_access_token.sql", "005_daily_question.sql", "006_drop_delivery_log_repo_sent_index.sql"} {
+		apply(n)
+	}
+	for _, q := range []string{
+		`INSERT INTO repos(slug, github_url, display_name) VALUES ('be', 'https://github.com/x/be', 'be')`,
+		`INSERT INTO contents(repo_slug, content_id, title, preview, body_path) VALUES ('be', '0001', 't', 'p', 'c/0001.md')`,
+		`INSERT INTO daily_question(day, repo_slug, content_id) VALUES ('2026-06-01', 'be', '0001')`,
+	} {
+		if _, err := conn.Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	apply("007_daily_question_notified.sql")
+
+	var notified int
+	if err := conn.QueryRow(`SELECT notified_at IS NOT NULL FROM daily_question WHERE day = '2026-06-01'`).Scan(&notified); err != nil || notified != 1 {
+		t.Errorf("existing row notified=%d err=%v, want 1 (배포 당일 지난 질문으로 메일이 나가면 안 됨)", notified, err)
+	}
+
+	// 007 뒤에 새로 저장되는 행은 알림 대상이다
+	if _, err := conn.Exec(`INSERT INTO daily_question(day, repo_slug, content_id) VALUES ('2026-06-02', 'be', '0001')`); err != nil {
+		t.Fatal(err)
+	}
+	if err := conn.QueryRow(`SELECT notified_at IS NOT NULL FROM daily_question WHERE day = '2026-06-02'`).Scan(&notified); err != nil || notified != 0 {
+		t.Errorf("new row notified=%d err=%v, want 0", notified, err)
+	}
+}

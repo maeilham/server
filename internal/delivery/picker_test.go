@@ -307,78 +307,6 @@ func TestPicker_ChosenContentIsTheRepoContentOfDay(t *testing.T) {
 	}
 }
 
-// 메일 배치가 보내는 글은 같은 구독자에게 API(같은 Picker)가 돌려주는 글과 같아야 한다.
-func TestDailySend_SendsWhatThePickerReturnsForThatSubscriber(t *testing.T) {
-	db := newTestDB(t)
-	sub := insertConfirmedSubscriber(t, db, "a@example.com")
-	insertRepo(t, db, "be")
-	insertRepo(t, db, "fe")
-	insertContent(t, db, "be", "0001")
-	insertContent(t, db, "fe", "0001")
-	subscribe(t, db, sub, "be", 3)
-	subscribe(t, db, sub, "fe", 3)
-
-	for i := 0; i < 40; i++ {
-		sendAt := time.Date(2026, 6, 1, 7, 0, 0, 0, testLoc).AddDate(0, 0, i) // 매일 07:00 KST
-		want, err := pickerAt(db, sendAt).ForSubscriber(context.Background(), sub)
-		if err != nil || want == nil {
-			t.Fatalf("day %d: picker got %v err=%v", i, want, err)
-		}
-		if _, err := DailySend(context.Background(), discardLogger(), &mockMailer{}, DailySendOptions{
-			Day: sendAt, Loc: testLoc,
-			SubRepo: store.NewSubscriberStore(db), RepoStore: store.NewRepoStore(db),
-			ContentStore: store.NewContentStore(db), QuestionStore: store.NewDailyQuestionStore(db), LogStore: store.NewDeliveryLogStore(db),
-		}); err != nil {
-			t.Fatal(err)
-		}
-		var repo, content string
-		if err := db.QueryRow(`SELECT repo_slug, content_id FROM delivery_log ORDER BY id DESC LIMIT 1`).Scan(&repo, &content); err != nil {
-			t.Fatal(err)
-		}
-		if repo+"/"+content != idOf(want) {
-			t.Fatalf("day %d: mail sent %s/%s, picker returns %s", i, repo, content, idOf(want))
-		}
-	}
-}
-
-// 이슈 #2에 남아 있던 한계: 발송이 끝나 로테이션이 넘어간 뒤 같은 날 재실행하면, 뒤늦게 가입한 구독자는
-// 이미 넘어간 "다음 글"을 받았다. 같은 repo의 같은 날은 모두에게 같은 글이어야 한다.
-func TestDailySend_LateSubscriberGetsTheSameContentAsEveryoneToday(t *testing.T) {
-	db := newTestDB(t)
-	early := insertConfirmedSubscriber(t, db, "early@example.com")
-	insertRepo(t, db, "be")
-	insertContent(t, db, "be", "0001")
-	insertContent(t, db, "be", "0002")
-	subscribe(t, db, early, "be", 3)
-
-	run := func(at time.Time) {
-		t.Helper()
-		if _, err := DailySend(context.Background(), discardLogger(), &mockMailer{}, DailySendOptions{
-			Day: at, Loc: testLoc,
-			SubRepo: store.NewSubscriberStore(db), RepoStore: store.NewRepoStore(db),
-			ContentStore: store.NewContentStore(db), QuestionStore: store.NewDailyQuestionStore(db), LogStore: store.NewDeliveryLogStore(db),
-		}); err != nil {
-			t.Fatal(err)
-		}
-	}
-	run(time.Date(2026, 5, 27, 7, 0, 0, 0, testLoc)) // 정기 발송: 0001이 나가고 로테이션이 0002를 가리킨다
-
-	late := insertConfirmedSubscriber(t, db, "late@example.com") // 발송 뒤에 가입
-	subscribe(t, db, late, "be", 3)
-	run(time.Date(2026, 5, 27, 10, 0, 0, 0, testLoc)) // 같은 날 재실행
-
-	contentOf := func(id int64) string {
-		var c string
-		if err := db.QueryRow(`SELECT content_id FROM delivery_log WHERE subscriber_id = ?`, id).Scan(&c); err != nil {
-			t.Fatalf("subscriber %d has no delivery: %v", id, err)
-		}
-		return c
-	}
-	if e, l := contentOf(early), contentOf(late); e != "0001" || l != "0001" {
-		t.Errorf("early got %s, late got %s, want both 0001 (the content of the day)", e, l)
-	}
-}
-
 // 게스트는 "활성 repo를 모두 같은 가중치로 구독한 id 0의 가상 구독자"다. 이 약속이 바뀌면 같은 날 게스트가 보는 repo가
 // 바뀌므로 고정해 둔다(실제 구독자 id는 1부터라 겹치지 않는다).
 func TestForGuest_IsTheVirtualSubscriberZero(t *testing.T) {
@@ -614,13 +542,11 @@ func TestDailyPickSeed_DependsOnServiceDateOnly(t *testing.T) {
 	}
 }
 
-func TestDailySend_RequiresQuestionStore(t *testing.T) {
+func TestNotifyNewQuestions_RequiresQuestionStore(t *testing.T) {
 	db := newTestDB(t)
-	_, err := DailySend(context.Background(), discardLogger(), &mockMailer{}, DailySendOptions{
-		Day: time.Date(2026, 5, 27, 0, 0, 0, 0, time.UTC), Loc: kst,
-		SubRepo: store.NewSubscriberStore(db), RepoStore: store.NewRepoStore(db),
-		ContentStore: store.NewContentStore(db), LogStore: store.NewDeliveryLogStore(db),
-	})
+	opts := notifyOpts(db, time.Date(2026, 5, 27, 0, 0, 0, 0, time.UTC))
+	opts.QuestionStore = nil
+	_, err := NotifyNewQuestions(context.Background(), discardLogger(), &mockMailer{}, opts)
 	if err == nil {
 		t.Fatal("err = nil, want an error when QuestionStore is missing")
 	}
@@ -644,29 +570,21 @@ func TestForSubscriber_ReturnsTheReviewFlag(t *testing.T) {
 	}
 }
 
-// 메일 배치가 만든 오늘의 질문 행은 API가 읽는 행과 같음(발송이 질문을 정함).
-
-// 메일 배치가 만든 오늘의 질문 행은 API가 읽는 행과 같음(발송이 질문을 정함).
-func TestDailySend_StoresTheDayQuestionThatTheAPIReads(t *testing.T) {
+// 알림이 정한 오늘의 질문 행은 API가 읽는 행과 같음(알림이 질문을 정해도 웹과 같은 글).
+func TestNotifyNewQuestions_StoresTheDayQuestionThatTheAPIReads(t *testing.T) {
 	db := newTestDB(t)
 	sub := insertConfirmedSubscriber(t, db, "a@example.com")
 	insertRepo(t, db, "be")
 	insertContent(t, db, "be", "0001")
 	insertContent(t, db, "be", "0002")
 	subscribe(t, db, sub, "be", 3)
-	sendAt := time.Date(2026, 9, 20, 7, 0, 0, 0, kst)
 
-	if _, err := DailySend(context.Background(), discardLogger(), &mockMailer{}, DailySendOptions{
-		Day: sendAt, Loc: kst,
-		SubRepo: store.NewSubscriberStore(db), RepoStore: store.NewRepoStore(db),
-		ContentStore: store.NewContentStore(db), LogStore: store.NewDeliveryLogStore(db),
-		QuestionStore: store.NewDailyQuestionStore(db),
-	}); err != nil {
+	if _, err := NotifyNewQuestions(context.Background(), discardLogger(), &mockMailer{}, notifyOpts(db, time.Date(2026, 9, 20, 7, 30, 0, 0, kst))); err != nil {
 		t.Fatal(err)
 	}
 	var content string
 	if err := db.QueryRow(`SELECT content_id FROM daily_question WHERE day = '2026-09-20' AND repo_slug = 'be'`).Scan(&content); err != nil {
-		t.Fatalf("no stored question for the sent day: %v", err)
+		t.Fatalf("no stored question for the notified day: %v", err)
 	}
 	got, _ := newToday(db, time.Date(2026, 9, 20, 15, 0, 0, 0, kst)).ForGuest(context.Background())
 	if content != "0001" || idOf(got) != "be/0001" {

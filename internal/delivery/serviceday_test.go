@@ -5,51 +5,30 @@ import (
 	"testing"
 	"time"
 	_ "time/tzdata"
-
-	"github.com/maeilham/server/internal/store"
 )
 
 // 서비스의 하루를 나누는 시간대. 운영 기본값(Asia/Seoul)과 같은 +09:00이다.
 var testLoc = time.FixedZone("KST", 9*3600)
 
-// 이슈 #2: 07:00 KST(= 전날 22:00 UTC)에 정기 발송한 뒤 같은 한국 날짜의 10:00 KST(= 01:00 UTC)에
-// 재실행하면 UTC 날짜가 바뀌어서 2통째가 나갔다. 서비스의 하루는 한국 시간 기준이므로 건너뛰어야 한다.
-func TestDailySend_RerunAcrossUTCMidnightSameServiceDay(t *testing.T) {
+// 07:00 KST(= 전날 22:00 UTC)에 알린 뒤 같은 한국 날짜의 10:00 KST(= 01:00 UTC)에 다시 돌려도
+// UTC 날짜가 바뀌었다고 2통째가 나가면 안 된다. 서비스의 하루는 한국 시간 기준이다.
+func TestNotifyNewQuestions_RerunAcrossUTCMidnightSameServiceDay(t *testing.T) {
 	db := newTestDB(t)
-	id := insertConfirmedSubscriber(t, db, "me@example.com")
-	insertRepo(t, db, "be")
-	insertContent(t, db, "be", "0001")
-	insertContent(t, db, "be", "0002")
-	subscribe(t, db, id, "be", 3)
-
-	mockM := &mockMailer{}
-	mk := func(day time.Time) DailySendOptions {
-		return DailySendOptions{
-			Day:           day,
-			Loc:           testLoc,
-			SubRepo:       store.NewSubscriberStore(db),
-			RepoStore:     store.NewRepoStore(db),
-			ContentStore:  store.NewContentStore(db),
-			QuestionStore: store.NewDailyQuestionStore(db),
-			LogStore:      store.NewDeliveryLogStore(db),
-		}
-	}
+	seedOneSubscriber(t, db, "0001", "0002")
+	m := &mockMailer{}
 	morning := time.Date(2026, 5, 26, 22, 0, 0, 0, time.UTC) // 2026-05-27 07:00 KST
 	later := time.Date(2026, 5, 27, 1, 0, 0, 0, time.UTC)    // 2026-05-27 10:00 KST
 
-	if _, err := DailySend(context.Background(), discardLogger(), mockM, mk(morning)); err != nil {
+	if _, err := NotifyNewQuestions(context.Background(), discardLogger(), m, notifyOpts(db, morning)); err != nil {
 		t.Fatal(err)
 	}
-	stats2, err := DailySend(context.Background(), discardLogger(), mockM, mk(later))
+	stats2, err := NotifyNewQuestions(context.Background(), discardLogger(), m, notifyOpts(db, later))
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if stats2.Sent != 0 || stats2.Skipped != 1 {
-		t.Errorf("rerun in the same KST day: Sent=%d Skipped=%d, want 0 and 1", stats2.Sent, stats2.Skipped)
-	}
-	if len(mockM.messages) != 1 {
-		t.Errorf("sent %d mails, want 1", len(mockM.messages))
+	if stats2.Sent != 0 || len(m.messages) != 1 {
+		t.Errorf("rerun in the same KST day: Sent=%d mails=%d, want 0 and 1", stats2.Sent, len(m.messages))
 	}
 	var questions int
 	_ = db.QueryRow(`SELECT COUNT(*) FROM daily_question`).Scan(&questions)
@@ -100,45 +79,27 @@ func TestServiceDay_DaylightSavingLength(t *testing.T) {
 	}
 }
 
-func TestDailySend_RequiresLoc(t *testing.T) {
+func TestNotifyNewQuestions_RequiresLoc(t *testing.T) {
 	db := newTestDB(t)
-	_, err := DailySend(context.Background(), discardLogger(), &mockMailer{}, DailySendOptions{
-		Day:           time.Date(2026, 5, 27, 0, 0, 0, 0, time.UTC),
-		SubRepo:       store.NewSubscriberStore(db),
-		RepoStore:     store.NewRepoStore(db),
-		ContentStore:  store.NewContentStore(db),
-		QuestionStore: store.NewDailyQuestionStore(db),
-		LogStore:      store.NewDeliveryLogStore(db),
-	})
-	if err == nil {
+	opts := notifyOpts(db, time.Date(2026, 5, 27, 0, 0, 0, 0, time.UTC))
+	opts.Loc = nil
+	if _, err := NotifyNewQuestions(context.Background(), discardLogger(), &mockMailer{}, opts); err == nil {
 		t.Fatal("err = nil, want an error when Loc is missing")
 	}
 }
 
 // 한국 자정을 지나면 UTC로는 아직 같은 날이어도 새 하루다: 23:59 KST와 00:00 KST 다음 날.
-func TestDailySend_NewServiceDayStartsAtServiceMidnight(t *testing.T) {
+func TestNotifyNewQuestions_NewServiceDayStartsAtServiceMidnight(t *testing.T) {
 	db := newTestDB(t)
-	id := insertConfirmedSubscriber(t, db, "me@example.com")
-	insertRepo(t, db, "be")
-	insertContent(t, db, "be", "0001")
-	insertContent(t, db, "be", "0002")
-	subscribe(t, db, id, "be", 3)
-
-	mockM := &mockMailer{}
-	mk := func(day time.Time) DailySendOptions {
-		return DailySendOptions{
-			Day: day, Loc: testLoc,
-			SubRepo: store.NewSubscriberStore(db), RepoStore: store.NewRepoStore(db),
-			ContentStore: store.NewContentStore(db), QuestionStore: store.NewDailyQuestionStore(db), LogStore: store.NewDeliveryLogStore(db),
-		}
-	}
+	seedOneSubscriber(t, db, "0001", "0002")
+	m := &mockMailer{}
 	lastSecond := time.Date(2026, 5, 27, 14, 59, 59, 0, time.UTC) // 23:59:59 KST, 5/27
 	midnight := time.Date(2026, 5, 27, 15, 0, 0, 0, time.UTC)     // 00:00:00 KST, 5/28
 
-	if _, err := DailySend(context.Background(), discardLogger(), mockM, mk(lastSecond)); err != nil {
+	if _, err := NotifyNewQuestions(context.Background(), discardLogger(), m, notifyOpts(db, lastSecond)); err != nil {
 		t.Fatal(err)
 	}
-	stats2, err := DailySend(context.Background(), discardLogger(), mockM, mk(midnight))
+	stats2, err := NotifyNewQuestions(context.Background(), discardLogger(), m, notifyOpts(db, midnight))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -148,41 +109,7 @@ func TestDailySend_NewServiceDayStartsAtServiceMidnight(t *testing.T) {
 	var sent string
 	_ = db.QueryRow(`SELECT group_concat(content_id) FROM (SELECT content_id FROM delivery_log ORDER BY id)`).Scan(&sent)
 	if sent != "0001,0002" {
-		t.Errorf("sent contents = %q, want 0001 then 0002 (각 서비스 하루가 자기 질문을 하나씩 보냄)", sent)
-	}
-}
-
-// 추첨 시드의 날짜도 서비스 시간대 기준이어야 한다. 00:30 KST(= 전날 15:30 UTC)는 UTC 날짜와 한국 날짜가 다른 시각이다.
-func TestDailySend_PickSeedUsesServiceDate(t *testing.T) {
-	db := newTestDB(t)
-	id := insertConfirmedSubscriber(t, db, "me@example.com")
-	insertRepo(t, db, "a")
-	insertRepo(t, db, "b")
-	insertContent(t, db, "a", "0001")
-	insertContent(t, db, "b", "0001")
-	subscribe(t, db, id, "a", 3)
-	subscribe(t, db, id, "b", 3)
-
-	mockM := &mockMailer{}
-	for i := 0; i < 60; i++ {
-		kst := time.Date(2026, 6, 1+i, 0, 30, 0, 0, testLoc)
-		day := kst.UTC() // 일부러 UTC 표기로 넘긴다
-		opts := DailySendOptions{
-			Day: day, Loc: testLoc,
-			SubRepo: store.NewSubscriberStore(db), RepoStore: store.NewRepoStore(db),
-			ContentStore: store.NewContentStore(db), QuestionStore: store.NewDailyQuestionStore(db), LogStore: store.NewDeliveryLogStore(db),
-		}
-		if _, err := DailySend(context.Background(), discardLogger(), mockM, opts); err != nil {
-			t.Fatal(err)
-		}
-		var got string
-		if err := db.QueryRow(`SELECT repo_slug FROM delivery_log ORDER BY id DESC LIMIT 1`).Scan(&got); err != nil {
-			t.Fatal(err)
-		}
-		want := []string{"a", "b"}[pickByWeight([]int{3, 3}, dailyPickSeed(id, kst, testLoc))]
-		if got != want {
-			t.Fatalf("day %s: picked repo %q, want %q (seed must use the service-zone date)", kst.Format("2006-01-02"), got, want)
-		}
+		t.Errorf("notified contents = %q, want 0001 then 0002 (각 서비스 하루가 자기 질문을 하나씩 알림)", sent)
 	}
 }
 

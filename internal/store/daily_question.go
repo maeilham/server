@@ -11,6 +11,7 @@ type DailyQuestion struct {
 	RepoSlug  string
 	ContentID string
 	Review    bool // 이미 나온 글을 다시 보여 주는 복습이면 true, 처음 나오는 새 글이면 false
+	Notified  bool // 새 질문 알림 처리를 마쳤으면 true
 	// PreviousDay는 이 글이 이 날 이전에 마지막으로 오늘의 질문이 된 날('YYYY-MM-DD')임. 한 번도 안 나온 새 글이면 nil.
 	// 행에 저장하지 않고 조회할 때마다 이력에서 구함.
 	PreviousDay *string
@@ -23,6 +24,9 @@ type DailyQuestionRepository interface {
 
 	// Ensure는 (day, repoSlug)의 질문을 돌려주고, 아직 없으면 정해서 저장함. (멱등)
 	Ensure(ctx context.Context, day, repoSlug string) (*DailyQuestion, error)
+
+	// MarkNotified는 (day, repoSlug)의 알림 처리를 마쳤다고 표시함. (멱등)
+	MarkNotified(ctx context.Context, day, repoSlug string) error
 }
 
 type sqlDailyQuestionStore struct{ db *sql.DB }
@@ -33,16 +37,16 @@ func NewDailyQuestionStore(db *sql.DB) DailyQuestionRepository {
 
 func (s *sqlDailyQuestionStore) Get(ctx context.Context, day, repoSlug string) (*DailyQuestion, error) {
 	var q DailyQuestion
-	var review int
+	var review, notified int
 	var previous sql.NullString
 	err := s.db.QueryRowContext(ctx, `
-		SELECT q.day, q.repo_slug, q.content_id, q.review,
+		SELECT q.day, q.repo_slug, q.content_id, q.review, q.notified_at IS NOT NULL,
 		       (SELECT MAX(p.day) FROM daily_question p
 		         WHERE p.repo_slug = q.repo_slug AND p.content_id = q.content_id AND p.day < q.day)
 		  FROM daily_question q
 		 WHERE q.day = ? AND q.repo_slug = ?`,
 		day, repoSlug,
-	).Scan(&q.Day, &q.RepoSlug, &q.ContentID, &review, &previous)
+	).Scan(&q.Day, &q.RepoSlug, &q.ContentID, &review, &notified, &previous)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -50,6 +54,7 @@ func (s *sqlDailyQuestionStore) Get(ctx context.Context, day, repoSlug string) (
 		return nil, fmt.Errorf("get daily question %s/%s: %w", day, repoSlug, err)
 	}
 	q.Review = review == 1
+	q.Notified = notified == 1
 	if previous.Valid {
 		day := previous.String
 		q.PreviousDay = &day
@@ -96,6 +101,16 @@ func (s *sqlDailyQuestionStore) Ensure(ctx context.Context, day, repoSlug string
 		return nil, fmt.Errorf("save daily question %s/%s: %w", day, repoSlug, err)
 	}
 	return s.Get(ctx, day, repoSlug)
+}
+
+func (s *sqlDailyQuestionStore) MarkNotified(ctx context.Context, day, repoSlug string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE daily_question SET notified_at = CURRENT_TIMESTAMP WHERE day = ? AND repo_slug = ? AND notified_at IS NULL`,
+		day, repoSlug)
+	if err != nil {
+		return fmt.Errorf("mark notified %s/%s: %w", day, repoSlug, err)
+	}
+	return nil
 }
 
 // choose는 day의 질문 후보를 정함. day보다 이전에 나온 기록만 보므로 같은 날의 행은 영향을 주지 않음.

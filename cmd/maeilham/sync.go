@@ -49,6 +49,14 @@ func syncRepos(ctx context.Context, d *deps, slug string) error {
 			errs = append(errs, fmt.Errorf("sync %s: %w", r.Slug, err))
 			continue
 		}
+		if ghApp != nil {
+			created, failed, err := content.EnsureDiscussions(ctx, log, ghApp, d.contentStore, r)
+			if err != nil {
+				log.Error("ensure discussions", "err", err)
+			} else if created > 0 || failed > 0 {
+				log.Info("discussions", "created", created, "failed", failed)
+			}
+		}
 		log.Info("sync done",
 			"scanned", stats.Scanned, "inserted", stats.Inserted,
 			"updated", stats.Updated, "deleted", stats.Deleted,

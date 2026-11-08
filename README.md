@@ -8,7 +8,7 @@
 
 ```text
 cmd/
-  maeilham/   진입점 (serve, sync, send-daily, send-test, repo, gen-link)
+  maeilham/   진입점 (serve, sync, notify, send-test, repo, gen-link)
 
 internal/
   content/    GitHub repo에서 콘텐츠 동기화, 본문(마크다운) 조회와 메모리 캐시
@@ -80,7 +80,9 @@ curl -s localhost:8080/api/contents/backend-ops/0001 | jq
 | --------------------------------- | ---- | ---------------------------------------- |
 | `MAEILHAM_DB`                     | -    | SQLite 경로 (기본: `./data/maeilham.db`) |
 | `MAEILHAM_HTTP_ADDR`              | -    | HTTP 주소 (기본: `:8080`)                |
-| `MAEILHAM_TZ`                     | -    | 서비스의 "하루"를 나누는 시간대. 오늘의 질문과 발송 배치(중복 발송 방지, 로테이션 넘김, 추첨 시드)에 쓰임 (기본: `Asia/Seoul`) |
+| `MAEILHAM_TZ`                     | -    | 서비스의 "하루"를 나누는 시간대. 오늘의 질문과 알림 메일(하루 한 통)에 쓰임 (기본: `Asia/Seoul`) |
+| `MAEILHAM_SYNC_INTERVAL`          | -    | `serve`가 콘텐츠를 sync하는 간격(예: `1h`). 비우면 안 함 |
+| `MAEILHAM_NOTIFY_AT`              | -    | `serve`가 새 질문 알림을 보내는 시각(서비스 시간대 `HH:MM`, 예: `07:30`). 비우면 안 보냄 |
 | `MAEILHAM_BASE_URL`               | -    | 웹 프론트 URL                            |
 | `MAEILHAM_API_URL`                | -    | API 서버 URL                             |
 | `MAEILHAM_SECRET`                 | ✓    | 토큰 서명 키 (개발 기본값이 있지만 운영에서는 반드시 변경) |
@@ -107,8 +109,8 @@ maeilham repo deactivate --slug <slug>
 # 콘텐츠 동기화
 maeilham sync [--repo <slug>]
 
-# 메일 발송
-maeilham send-daily [--dry-run] [--date YYYY-MM-DD]   # --date는 MAEILHAM_TZ 시간대의 그날
+# 새 질문 알림 메일 (오늘 처음 나온 새 글만, 복습일은 안 보냄)
+maeilham notify [--dry-run] [--date YYYY-MM-DD]   # --date는 MAEILHAM_TZ 시간대의 그날
 maeilham send-test --to <email>
 
 # 유틸

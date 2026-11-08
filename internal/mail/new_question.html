@@ -15,44 +15,37 @@
         <tr>
           <td style="padding-bottom:48px;">
             <span style="font-size:17px;font-weight:700;color:#111111;letter-spacing:-0.3px;">매일함</span>
-            <span style="font-size:14px;color:#8b95a1;margin-left:8px;">{{.RepoName}}</span>
           </td>
         </tr>
 
-        <!-- 타이틀 -->
-        <tr>
-          <td style="padding-bottom:24px;">
-            <div style="font-size:13px;font-weight:600;color:#8b95a1;letter-spacing:0.5px;text-transform:uppercase;margin-bottom:12px;">오늘의 질문</div>
-            <div style="font-size:26px;font-weight:700;line-height:1.4;color:#333d4b;">{{.Title}}</div>
-          </td>
-        </tr>
-
-        {{if .Preview}}
-        <!-- 프리뷰 -->
         <tr>
           <td style="padding-bottom:32px;">
+            <div style="font-size:13px;font-weight:600;color:#8b95a1;letter-spacing:0.5px;">새로운 질문이 생겼어요</div>
+          </td>
+        </tr>
+
+        {{range .Questions}}
+        <!-- 질문 -->
+        <tr>
+          <td style="padding-bottom:12px;">
+            <div style="font-size:14px;color:#8b95a1;margin-bottom:8px;">{{.RepoName}}</div>
+            <div style="font-size:24px;font-weight:700;line-height:1.4;color:#333d4b;">{{.Title}}</div>
+          </td>
+        </tr>
+        {{if .Preview}}
+        <tr>
+          <td style="padding-bottom:24px;">
             <div style="font-size:16px;color:#4e5968;line-height:1.7;">{{.Preview}}</div>
           </td>
         </tr>
         {{end}}
-
         <!-- CTA -->
         <tr>
           <td style="padding-bottom:48px;">
-            <table cellpadding="0" cellspacing="0">
-              <tr>
-                <td style="padding-right:8px;">
-                  <a href="{{.GitHubURL}}" style="display:inline-block;background:#1a1108;color:#ffffff;font-size:15px;font-weight:600;text-decoration:none;padding:12px 24px;border-radius:8px;">전체 보기 →</a>
-                </td>
-                {{if .DiscussionURL}}
-                <td>
-                  <a href="{{.DiscussionURL}}" style="display:inline-block;background:#f2f4f6;color:#333d4b;font-size:15px;font-weight:600;text-decoration:none;padding:12px 24px;border-radius:8px;">토론 참여 →</a>
-                </td>
-                {{end}}
-              </tr>
-            </table>
+            <a href="{{.URL}}" style="display:inline-block;background:#1a1108;color:#ffffff;font-size:15px;font-weight:600;text-decoration:none;padding:12px 24px;border-radius:8px;">지금 확인하기 →</a>
           </td>
         </tr>
+        {{end}}
 
         <!-- 구분선 -->
         <tr>
@@ -65,7 +58,7 @@
         <tr>
           <td style="padding-bottom:32px;">
             <div style="font-size:13px;color:#8b95a1;line-height:1.7;">
-              매일함은 하루 한 통, 개발 학습 질문을 드립니다.
+              매일함은 새 질문이 올라오는 날 아침에 알려드려요.
               {{if .UnsubscribeURL}}
               &nbsp;·&nbsp;<a href="{{.UnsubscribeURL}}" style="color:#8b95a1;">구독 해지</a>
               {{end}}

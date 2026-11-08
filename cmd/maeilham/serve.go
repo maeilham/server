@@ -13,6 +13,9 @@ import (
 	"github.com/maeilham/server/internal/subscriber"
 )
 
+// notifyCheckInterval마다 알림 시각이 지났는지 보고, 아직 알리지 않은 새 질문이 있으면 보낸다.
+const notifyCheckInterval = 5 * time.Minute
+
 type ServeCmd struct{}
 
 func (c *ServeCmd) Run(ctx context.Context, d *deps) error {
@@ -44,6 +47,18 @@ func (c *ServeCmd) Run(ctx context.Context, d *deps) error {
 		go runEvery(ctx, d.cfg.SyncInterval, func(ctx context.Context) {
 			if err := syncRepos(ctx, d, ""); err != nil {
 				d.log.Error("scheduled sync", "err", err)
+			}
+		})
+	}
+
+	if d.cfg.NotifyEnabled {
+		go runEvery(ctx, notifyCheckInterval, func(ctx context.Context) {
+			now := time.Now()
+			if !delivery.NotifyDue(now, loc, d.cfg.NotifyAt) {
+				return
+			}
+			if err := notifyNewQuestions(ctx, d, loc, now, false, ""); err != nil {
+				d.log.Error("scheduled notify", "err", err)
 			}
 		})
 	}

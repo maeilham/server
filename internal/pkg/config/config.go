@@ -21,6 +21,11 @@ type Config struct {
 	// SyncInterval이 0이면 serve가 콘텐츠를 sync하지 않는다(로컬 개발 기본).
 	SyncInterval time.Duration
 
+	// NotifyEnabled가 false이면 serve가 새 질문 알림을 보내지 않는다(로컬 개발 기본).
+	// NotifyAt은 서비스 시간대 자정부터의 발송 시각(MAEILHAM_NOTIFY_AT=07:30)이다.
+	NotifyEnabled bool
+	NotifyAt      time.Duration
+
 	GitHubToken string
 
 	GitHubAppID          int64
@@ -56,6 +61,15 @@ func Load() (*Config, error) {
 			return nil, fmt.Errorf("MAEILHAM_SYNC_INTERVAL %q: duration이어야 함(예: 1h, 비우면 끔)", v)
 		}
 		c.SyncInterval = d
+	}
+
+	if v := os.Getenv("MAEILHAM_NOTIFY_AT"); v != "" {
+		t, err := time.Parse("15:04", v)
+		if err != nil {
+			return nil, fmt.Errorf("MAEILHAM_NOTIFY_AT %q: HH:MM 형식이어야 함(예: 07:30, 비우면 끔)", v)
+		}
+		c.NotifyEnabled = true
+		c.NotifyAt = time.Duration(t.Hour())*time.Hour + time.Duration(t.Minute())*time.Minute
 	}
 
 	if c.DatabaseURL == "" {

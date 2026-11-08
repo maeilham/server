@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 	_ "time/tzdata"
@@ -20,12 +21,12 @@ import (
 )
 
 var CLI struct {
-	Serve     ServeCmd     `cmd:"" help:"HTTP 서버 기동"`
-	Sync      SyncCmd      `cmd:"" help:"콘텐츠 repo를 fetch + DB로 sync"`
-	SendDaily SendDailyCmd `cmd:"send-daily" help:"활성 구독자 전체에 오늘의 메일 발송"`
-	SendTest  SendTestCmd  `cmd:"send-test" help:"발송 어댑터 동작 확인용 메일 1통 전송"`
-	Repo      RepoCmd      `cmd:"" help:"repo 관리"`
-	GenLink   GenLinkCmd   `cmd:"gen-link" help:"테스트용 링크 생성"`
+	Serve    ServeCmd    `cmd:"" help:"HTTP 서버 기동"`
+	Sync     SyncCmd     `cmd:"" help:"콘텐츠 repo를 fetch + DB로 sync"`
+	Notify   NotifyCmd   `cmd:"" help:"오늘 처음 나온 새 질문을 구독자에게 메일로 알림"`
+	SendTest SendTestCmd `cmd:"send-test" help:"발송 어댑터 동작 확인용 메일 1통 전송"`
+	Repo     RepoCmd     `cmd:"" help:"repo 관리"`
+	GenLink  GenLinkCmd  `cmd:"gen-link" help:"테스트용 링크 생성"`
 }
 
 func main() {
@@ -77,6 +78,9 @@ type deps struct {
 	logStore      store.DeliveryLogRepository
 	questionStore store.DailyQuestionRepository
 	subRepo       store.SubscriberRepository
+
+	appOnce sync.Once
+	app     *gh.App
 }
 
 // location은 서비스의 "하루"를 나누는 시간대(MAEILHAM_TZ)를 돌려준다. serve와 send-daily가 같은 값을 쓴다.
@@ -88,17 +92,22 @@ func (d *deps) location() (*time.Location, error) {
 	return loc, nil
 }
 
+// ghApp은 GitHub App 클라이언트를 한 번만 만들어 돌려준다(설정이 없거나 만들기에 실패하면 nil).
+// 스케줄러가 sync를 되풀이해도 PEM을 다시 읽거나 발급받은 installation 토큰 캐시를 버리지 않는다.
 func (d *deps) ghApp() *gh.App {
-	cfg := d.cfg
-	if cfg.GitHubAppID == 0 || cfg.GitHubAppPemPath == "" || cfg.GitHubInstallationID == 0 {
-		return nil
-	}
-	app, err := gh.NewApp(cfg.GitHubAppID, cfg.GitHubInstallationID, cfg.GitHubAppPemPath)
-	if err != nil {
-		d.log.Warn("github app init failed", "err", err)
-		return nil
-	}
-	return app
+	d.appOnce.Do(func() {
+		cfg := d.cfg
+		if cfg.GitHubAppID == 0 || cfg.GitHubAppPemPath == "" || cfg.GitHubInstallationID == 0 {
+			return
+		}
+		app, err := gh.NewApp(cfg.GitHubAppID, cfg.GitHubInstallationID, cfg.GitHubAppPemPath)
+		if err != nil {
+			d.log.Warn("github app init failed", "err", err)
+			return
+		}
+		d.app = app
+	})
+	return d.app
 }
 
 func (d *deps) mailer() mail.Mailer {

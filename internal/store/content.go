@@ -46,6 +46,9 @@ type ContentRepository interface {
 	GetByRepoAndID(ctx context.Context, repoSlug, contentID string) (*Content, error)
 	// SaveDiscussionURL persists the Discussion URL and node ID after creation.
 	SaveDiscussionURL(ctx context.Context, repoSlug, contentID, url, nodeID string) error
+	// ListWithoutDiscussion returns the repo's live contents that have no Discussion URL yet (RepoSlug, ContentID, Title, Preview만 채움).
+	// node ID가 아니라 URL로 판단함: node ID를 저장하기 전에 만든 옛 Discussion은 URL만 있음.
+	ListWithoutDiscussion(ctx context.Context, repoSlug string) ([]*Content, error)
 }
 
 type sqlContentStore struct{ db *sql.DB }
@@ -202,4 +205,26 @@ func (s *sqlContentStore) SaveDiscussionURL(ctx context.Context, repoSlug, conte
 		url, nodeID, repoSlug, contentID,
 	)
 	return err
+}
+
+func (s *sqlContentStore) ListWithoutDiscussion(ctx context.Context, repoSlug string) ([]*Content, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT content_id, title, preview FROM contents
+		  WHERE repo_slug = ? AND deleted_at IS NULL AND COALESCE(discussion_url, '') = ''
+		  ORDER BY content_id`,
+		repoSlug,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list contents without discussion for %s: %w", repoSlug, err)
+	}
+	defer closeutil.Discard(rows)
+	var out []*Content
+	for rows.Next() {
+		c := &Content{RepoSlug: repoSlug}
+		if err := rows.Scan(&c.ContentID, &c.Title, &c.Preview); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
 }

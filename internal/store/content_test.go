@@ -217,3 +217,36 @@ func TestSetAuthoredAt_OnlyWhenEmpty(t *testing.T) {
 		t.Errorf("덮어써짐: %s", got)
 	}
 }
+
+func TestListWithoutDiscussion(t *testing.T) {
+	db := newTestDB(t)
+	insertRepo(t, db, "be", "be", 1)
+	insertRepo(t, db, "fe", "fe", 1)
+	add := func(repo, id string, urlExpr string) {
+		t.Helper()
+		mustExec(t, db, `INSERT INTO contents(repo_slug, content_id, title, preview, body_path, discussion_url) VALUES (?, ?, ?, ?, ?, `+urlExpr+`)`,
+			repo, id, "title-"+id, "preview-"+id, "content/"+id+".md")
+	}
+	add("be", "0001", "'https://github.com/d/1'") // 있음
+	add("be", "0002", "NULL")                     // 없음
+	add("be", "0003", "''")                       // 빈 문자열도 없음
+	add("be", "0004", "NULL")                     // 삭제됨
+	mustExec(t, db, `UPDATE contents SET deleted_at = CURRENT_TIMESTAMP WHERE content_id = '0004'`)
+	add("be", "0005", "'https://github.com/d/5'") // URL만 있고 node ID는 없는 옛 Discussion
+	add("fe", "0001", "NULL")                     // 다른 repo
+
+	got, err := store.NewContentStore(db).ListWithoutDiscussion(context.Background(), "be")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ids []string
+	for _, c := range got {
+		ids = append(ids, c.ContentID)
+		if c.RepoSlug != "be" || c.Title != "title-"+c.ContentID || c.Preview != "preview-"+c.ContentID {
+			t.Errorf("fields not filled: %+v", c)
+		}
+	}
+	if len(ids) != 2 || ids[0] != "0002" || ids[1] != "0003" {
+		t.Errorf("ids = %v, want [0002 0003] (URL이 있으면 node ID가 비어 있어도 제외, 삭제·다른 repo 제외)", ids)
+	}
+}

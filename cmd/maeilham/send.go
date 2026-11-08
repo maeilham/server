@@ -38,7 +38,6 @@ func notifyNewQuestions(ctx context.Context, d *deps, loc *time.Location, day ti
 		DryRun:        dryRun,
 		BaseURL:       baseURL,
 		Secret:        d.cfg.Secret,
-		GitHubApp:     d.ghApp(),
 		SubRepo:       d.subRepo,
 		RepoStore:     d.repoStore,
 		ContentStore:  d.contentStore,

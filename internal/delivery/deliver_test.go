@@ -75,7 +75,7 @@ func TestNotifyNewQuestions_SendsTitleOfTodaysNewQuestionOncePerDay(t *testing.T
 		t.Fatalf("stats = %+v", stats)
 	}
 	msg := m.messages[0]
-	if msg.To != "me@example.com" || !strings.Contains(msg.Subject, "title-0001") || !strings.Contains(msg.TextBody, "https://web.example") {
+	if msg.To != "me@example.com" || !strings.Contains(msg.Subject, "title-0001") || !strings.Contains(msg.TextBody, "지금 확인하기 → https://web.example/q/be/0001\n") {
 		t.Errorf("unexpected mail: %+v", msg)
 	}
 
@@ -159,6 +159,11 @@ func TestNotifyNewQuestions_OneMailForSeveralRepos(t *testing.T) {
 
 	if len(m.messages) != 1 || !strings.Contains(m.messages[0].Subject, "2개") {
 		t.Fatalf("mails = %+v, want one mail for 2 questions", m.messages)
+	}
+	for _, link := range []string{"https://web.example/q/be/0001", "https://web.example/q/ops/0001"} {
+		if !strings.Contains(m.messages[0].TextBody, link) {
+			t.Errorf("mail has no link to its own question %s:\n%s", link, m.messages[0].TextBody)
+		}
 	}
 }
 
@@ -251,6 +256,19 @@ func TestNotifyDue(t *testing.T) {
 	for _, tc := range cases {
 		if got := NotifyDue(tc.now, testLoc, at); got != tc.want {
 			t.Errorf("%s: NotifyDue(%s) = %v, want %v", tc.name, tc.now, got, tc.want)
+		}
+	}
+}
+
+func TestQuestionURL(t *testing.T) {
+	cases := []struct{ base, repo, id, want string }{
+		{"https://web.example", "bops", "0005", "https://web.example/q/bops/0005"},
+		{"https://web.example/", "bops", "0005", "https://web.example/q/bops/0005"}, // 끝 슬래시는 한 번만
+		{"https://web.example", "a b/c", "0001", "https://web.example/q/a%20b%2Fc/0001"},
+	}
+	for _, tc := range cases {
+		if got := questionURL(tc.base, tc.repo, tc.id); got != tc.want {
+			t.Errorf("questionURL(%q, %q, %q) = %q, want %q", tc.base, tc.repo, tc.id, got, tc.want)
 		}
 	}
 }

@@ -30,13 +30,13 @@ type NewQuestion struct {
 	RepoName string
 	Title    string
 	Preview  string
+	URL      string // 웹의 이 글 주소. 첫 화면은 다른 repo의 질문을 보여줄 수 있어서 글마다 직접 연결함
 }
 
 // NewQuestionMailData carries everything the new-question mail template needs.
 // The template package itself stays decoupled from delivery/content packages.
 type NewQuestionMailData struct {
-	Questions      []NewQuestion
-	WebURL         string // 웹의 오늘의 질문 주소. 개인 링크 토큰은 싣지 않는다
+	Questions      []NewQuestion // 링크에 개인 링크 토큰은 싣지 않는다
 	UnsubscribeURL string
 
 	// Subject is injected into the HTML template; set by RenderNewQuestions.
@@ -122,8 +122,8 @@ func RenderNewQuestions(d NewQuestionMailData) (subject, text, html string) {
 		if q.Preview != "" {
 			fmt.Fprintf(&b, "%s\n\n", q.Preview)
 		}
+		fmt.Fprintf(&b, "지금 확인하기 → %s\n\n", q.URL)
 	}
-	fmt.Fprintf(&b, "지금 확인하기 → %s\n", d.WebURL)
 	if d.UnsubscribeURL != "" {
 		fmt.Fprintf(&b, "\n—\n구독 해지 → %s\n", d.UnsubscribeURL)
 	}

@@ -82,8 +82,8 @@ func (c *SendTestCmd) Run(ctx context.Context, d *deps) error {
 			RepoName: "백엔드 면접",
 			Title:    "인덱스(Index)가 무엇이고, 어떻게 동작하나요?",
 			Preview:  "DB 인덱스는 데이터 검색 속도를 높이기 위해 별도로 관리하는 자료구조입니다.",
+			URL:      "https://maeilham.github.io/q/be/0001",
 		}},
-		WebURL:         "https://maeilham.github.io/",
 		UnsubscribeURL: "https://maeilham.github.io/?action=unsubscribe&token=test",
 	})
 	if err := d.mailer().Send(ctx, mail.Message{

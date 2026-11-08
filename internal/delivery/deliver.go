@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"strings"
 	"time"
 
@@ -135,7 +136,7 @@ func NotifyNewQuestions(
 			if r := repoMap[n.content.RepoSlug]; r != nil {
 				repoName = r.DisplayName
 			}
-			items = append(items, mail.NewQuestion{RepoName: repoName, Title: n.content.Title, Preview: n.content.Preview})
+			items = append(items, mail.NewQuestion{RepoName: repoName, Title: n.content.Title, Preview: n.content.Preview, URL: questionURL(opts.BaseURL, n.content.RepoSlug, n.content.ContentID)})
 			mine = append(mine, n.content)
 		}
 		if len(items) == 0 {
@@ -145,7 +146,6 @@ func NotifyNewQuestions(
 
 		subject, text, htmlBody := mail.RenderNewQuestions(mail.NewQuestionMailData{
 			Questions:      items,
-			WebURL:         opts.BaseURL,
 			UnsubscribeURL: buildUnsubscribeURL(opts.BaseURL, opts.Secret, sub.Email),
 		})
 
@@ -202,4 +202,9 @@ func buildUnsubscribeURL(baseURL, secret, email string) string {
 	payload := base64.RawURLEncoding.EncodeToString([]byte(msg))
 	token := payload + "." + sig
 	return fmt.Sprintf("%s/?action=unsubscribe&token=%s", strings.TrimSuffix(baseURL, "/"), token)
+}
+
+// questionURL은 웹의 글 주소(/q/<repo>/<id>)임. 웹 첫 화면은 repo 하나만 보여주므로 메일은 글로 직접 연결함.
+func questionURL(baseURL, repoSlug, contentID string) string {
+	return strings.TrimSuffix(baseURL, "/") + "/q/" + url.PathEscape(repoSlug) + "/" + url.PathEscape(contentID)
 }
